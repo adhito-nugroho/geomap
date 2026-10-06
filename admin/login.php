@@ -36,12 +36,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body class="min-h-screen bg-emerald-950 flex items-center justify-center p-4">
 <main class="w-full max-w-sm bg-white rounded-xl shadow-xl p-6">
   <div class="flex items-center gap-3 mb-1">
-    <img src="../assets/logo.png" alt="Logo CDK Wilayah Bojonegoro" class="w-12 h-12 rounded-full object-cover" onerror="this.style.display='none'">
+    <span class="bg-emerald-900 rounded-xl p-1 shrink-0">
+      <img src="../assets/logo.png" alt="Logo CDK Wilayah Bojonegoro" class="w-11 h-11 rounded-lg object-cover" onerror="this.parentElement.style.display='none'">
+    </span>
     <div>
-      <h1 class="text-lg font-bold text-emerald-900 leading-tight">WebGIS Perhutanan Sosial</h1>
-      <p class="text-xs text-emerald-700 font-medium">CDK Wilayah Bojonegoro</p>
+      <p class="font-bold text-emerald-950 leading-tight">CDK Wilayah</p>
+      <p class="font-bold text-emerald-950 leading-tight">Bojonegoro</p>
+      <p class="text-[11px] text-gray-500 leading-tight">DISHUT PROV. JATIM</p>
     </div>
   </div>
+  <h1 class="text-lg font-bold text-emerald-900 leading-tight">WebGIS Perhutanan Sosial</h1>
   <p class="text-sm text-gray-500 mb-4">Login admin internal Cabang Dinas Kehutanan</p>
 
   <?php if ($error !== ''): ?>

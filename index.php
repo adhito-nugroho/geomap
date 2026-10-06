@@ -43,11 +43,15 @@
 <!-- ===== Top bar: logo + judul di kiri; info, home, login di kanan ===== -->
 <header class="bg-emerald-900 text-white flex items-center justify-between px-3 py-2 z-20 shrink-0">
   <div class="flex items-center gap-2 min-w-0">
-    <!-- Logo CDK Wilayah Bojonegoro (disembunyikan otomatis bila file tak ada) -->
-    <img src="assets/logo.png" alt="Logo CDK Wilayah Bojonegoro" class="w-9 h-9 shrink-0 rounded-full bg-white object-cover" onerror="this.style.display='none'">
+    <!-- Branding CDK Wilayah Bojonegoro: logo dalam kotak putih + teks bertingkat -->
+    <div class="bg-white rounded-xl p-1 shrink-0">
+      <img src="assets/logo.png" alt="Logo CDK Wilayah Bojonegoro" class="w-9 h-9 rounded-lg object-cover" onerror="this.parentElement.style.display='none'">
+    </div>
     <div class="min-w-0 leading-tight">
-      <h1 class="font-bold text-sm sm:text-base truncate" x-text="mapTitle">Memuat…</h1>
-      <p class="text-[11px] sm:text-xs text-emerald-200 truncate">CDK Wilayah Bojonegoro</p>
+      <p class="font-bold text-sm sm:text-base leading-tight">CDK Wilayah</p>
+      <p class="font-bold text-sm sm:text-base leading-tight">Bojonegoro</p>
+      <p class="text-[10px] sm:text-[11px] text-emerald-200 leading-tight">DISHUT PROV. JATIM</p>
+      <p class="text-[10px] sm:text-[11px] text-emerald-200 truncate leading-tight" x-text="mapTitle">Memuat…</p>
     </div>
   </div>
   <div class="flex items-center gap-1 sm:gap-2">
