@@ -1,94 +1,94 @@
 @echo off
-setlocal EnableExtensions
-rem ============================================================
-rem  deploy-git.bat : commit + push project ke GitHub
-rem  Repo   : https://github.com/adhito-nugroho/geomap.git
-rem  Cara pakai (dari folder project):
-rem    deploy-git.bat                 (pesan commit otomatis: Deploy tgl_jam)
-rem    deploy-git.bat "Pesan custom"
-rem  Catatan: config.php TIDAK ikut ter-push (ada di .gitignore).
-rem ============================================================
+setlocal enabledelayedexpansion
 
-set "REPO_URL=https://github.com/adhito-nugroho/geomap.git"
-set "ROOT=%~dp0"
-cd /d "%ROOT%" || (echo [GAGAL] Tidak bisa masuk folder %ROOT% & exit /b 1)
+:: =======================================================
+:: KONFIGURASI SERVER (CLOUDFLARE SSH TUNNEL & WINDOWS)
+:: Sesuaikan sekali bila server berbeda.
+:: =======================================================
+set SERVER_USER=adit
+set SERVER_IP=127.0.0.1
+set SERVER_PORT=2222
+set "REMOTE_DIR=C:\laragon\www\website-cdk\geomap"
+set BRANCH=master
+set GIT_REPO_URL=https://github.com/adhito-nugroho/geomap.git
 
-where git >nul 2>nul
-if errorlevel 1 (echo [GAGAL] git tidak ditemukan di PATH. & exit /b 1)
+:: Path penuh di server (SSH Windows PATH sering kosong/minimal)
+set "REMOTE_GIT=C:\laragon\bin\git\cmd\git.exe"
 
-if not exist ".git" (
-  echo [INFO] Repo git belum ada, inisialisasi baru...
-  git init || exit /b 1
-  git branch -M main
-)
+echo ======================================================
+echo GEOMAP CDK — DEPLOY GIT PULL + MIGRASI DB
+echo ======================================================
 
-for /f %%b in ('git branch --show-current 2^>nul') do set "BRANCH=%%b"
-if not defined BRANCH set "BRANCH=main"
-echo [INFO] Branch lokal: %BRANCH%
-
-git remote get-url origin >nul 2>nul
-if errorlevel 1 (
-  echo [INFO] Menambahkan remote origin...
-  git remote add origin "%REPO_URL%" || exit /b 1
-)
-
-rem --- Pengaman: config.php (kredensial) tidak boleh terlacak git ---
+:: Pengaman: config.php (kredensial) tidak boleh terlacak git
 git ls-files config.php | findstr /i /c:"config.php" >nul
 if not errorlevel 1 (
-  echo [BAHAYA] config.php terlacak git! Batalkan dulu dengan:
-  echo   git rm --cached config.php
-  exit /b 1
+    echo [BAHAYA] config.php terlacak git! Batalkan dulu dengan:
+    echo   git rm --cached config.php
+    pause
+    exit /b 1
 )
 
+:: 1. Commit (jika ada perubahan) lalu Push ke remote
+echo [1/3] Mendorong perubahan lokal ke Repository...
+
 git add -A
-echo ---------- status ----------
-git status --short
-echo ----------------------------
 
-git diff --cached --quiet
-if errorlevel 1 goto :DOCOMMIT
-echo [INFO] Tidak ada perubahan untuk di-commit.
-goto :PULLPUSH
+set "NEED_COMMIT=0"
+for /f %%i in ('git diff --cached --name-only') do set "NEED_COMMIT=1"
 
-:DOCOMMIT
-if "%~1"=="" goto :AUTOMSG
-set "MSG=%~1"
-goto :DOMMIT
-:AUTOMSG
-for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HH-mm"') do set "MSG=Deploy %%t"
-:DOMMIT
-git commit -m "%MSG%" || exit /b 1
+if "!NEED_COMMIT!"=="0" (
+    echo Tidak ada perubahan lokal. Skip commit, lanjut push/pull...
+) else (
+    set /p msg="Masukkan pesan commit (tekan Enter untuk default 'update aplikasi'): "
+    if "!msg!"=="" set "msg=update aplikasi"
 
-:PULLPUSH
-rem Tarik dulu HANYA bila branch sudah ada di remote (push pertama tidak perlu pull)
-git ls-remote --heads origin "%BRANCH%" | findstr /c:"refs/heads/" >nul
-if errorlevel 1 goto :FIRSTPUSH
-echo [INFO] Pull --rebase dari origin/%BRANCH%...
-git pull --rebase origin "%BRANCH%" || exit /b 1
-goto :DOPUSH
+    git commit -m "!msg!"
+    if errorlevel 1 (
+        echo Gagal melakukan git commit!
+        pause
+        exit /b 1
+    )
+)
 
-:FIRSTPUSH
-echo [INFO] Branch remote belum ada, lewati pull (push awal).
+git push origin %BRANCH%
+if errorlevel 1 (
+    echo Gagal melakukan git push dari laptop!
+    pause
+    exit /b 1
+)
 
-:DOPUSH
-echo [INFO] Push ke origin/%BRANCH%...
-git push -u origin "%BRANCH%" || exit /b 1
+:: 2. Git Fetch + Reset di Server via SSH (menimpa file lama di server)
+:: reset --hard menyamakan file terlacak; clean -fd membersihkan sisa file,
+:: KECUALI folder storage/geojson (data upload produksi) dan file ter-ignore
+:: (config.php) yang selalu dipertahankan.
+echo.
+echo [2/3] Menyamakan file di server (fetch + reset)...
+echo *(Jika diminta password SSH, masukkan password akun server)*
+echo.
 
-rem --- Update server lokal bila ada: pull + migrasi skema SAJA tanpa seed ---
-rem Atur folder server di bawah, atau via env GEOMAP_SERVER_DIR sebelum menjalankan.
-if not defined GEOMAP_SERVER_DIR set "GEOMAP_SERVER_DIR=C:\laragon\www\website-cdk\geomap"
-if not exist "%GEOMAP_SERVER_DIR%\.git" goto :NOSERVER
-echo [INFO] Update server: %GEOMAP_SERVER_DIR%
-git -C "%GEOMAP_SERVER_DIR%" pull --rebase origin "%BRANCH%" || exit /b 1
-call "%ROOT%deploy-db.bat" "%GEOMAP_SERVER_DIR%" --migrations-only || exit /b 1
-echo [OK] Deploy selesai: kode ter-push, server ter-pull + termigrasi.
-goto :ENDOK
+ssh -p %SERVER_PORT% %SERVER_USER%@%SERVER_IP% "%REMOTE_GIT% config --global --add safe.directory C:/laragon/www/website-cdk/geomap && cd /d %REMOTE_DIR% && (%REMOTE_GIT% remote get-url origin >nul 2>&1 || %REMOTE_GIT% remote add origin %GIT_REPO_URL%) && %REMOTE_GIT% remote set-url origin %GIT_REPO_URL% && %REMOTE_GIT% fetch origin && %REMOTE_GIT% reset --hard origin/%BRANCH% && %REMOTE_GIT% clean -fd -e storage/geojson/"
 
-:NOSERVER
-echo [INFO] Folder server tidak ditemukan di mesin ini, lewati update server.
-echo        Petunjuk: jalankan deploy-git.bat ini JUGA di server - di sana ia
-echo        akan pull + migrasi otomatis (push tidak ada yang baru).
-echo [OK] Deploy git selesai (push saja).
+if errorlevel 1 (
+    echo.
+    echo Git Fetch/Reset di server gagal.
+    pause
+    exit /b 1
+)
 
-:ENDOK
-endlocal
+:: 3. Jalankan migrasi database di Server via SSH (deploy-db.bat: full + seed bila awal)
+echo.
+echo [3/3] Menjalankan migrasi database di server...
+
+ssh -p %SERVER_PORT% %SERVER_USER%@%SERVER_IP% "cd /d %REMOTE_DIR% && deploy-db.bat"
+
+if errorlevel 1 (
+    echo.
+    echo Migrasi server gagal. Cek output di atas, atau buka migrate.php
+    echo di browser di server sebagai alternatif.
+)
+
+echo.
+echo ======================================================
+echo DEPLOYMENT DAN MIGRASI SELESAI! Cek viewer di browser.
+echo ======================================================
+pause
