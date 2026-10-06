@@ -17,8 +17,38 @@
 <script src="https://unpkg.com/leaflet-minimap@3.6.1/dist/Control.MiniMap.min.js"></script>
 <script src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js" defer></script>
 <style>
+  /* Tinggi header sebagai variabel tunggal: 56px desktop, 52px mobile */
+  :root { --header-h: 56px; }
+  @media (max-width: 639.98px) { :root { --header-h: 52px; } }
+  /* Top bar: tinggi dari variabel, gradien + garis bawah + bayangan */
+  header.topbar {
+    height: var(--header-h);
+    overflow: hidden;
+    background: linear-gradient(to right, #064e3b, #047857);
+    border-bottom: 1px solid rgba(255, 255, 255, .1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+    position: sticky;
+    top: 0;
+    z-index: 20; /* di atas panel (10) & kontrol Leaflet, di bawah modal (30) */
+  }
+  /* Area peta mengisi sisa viewport di bawah header (flex-1 sebagai fallback) */
+  #map-wrap { height: calc(100dvh - var(--header-h)); }
   /* Peta mengisi seluruh ruang di bawah top bar */
   #map { position: absolute; inset: 0; z-index: 0; }
+  /* Teks branding dua baris: nowrap + ellipsis; baris 2 hanya >=640px */
+  .brand-title { font-size: 16px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand-sub { font-size: 12px; color: #a7f3d0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 639.98px) { .brand-sub { display: none; } }
+  /* Logo: 40px desktop / 36px mobile, rasio asli tanpa distorsi */
+  .brand-logo { height: 40px; width: auto; object-fit: contain; }
+  @media (max-width: 639.98px) { .brand-logo { height: 36px; } }
+  /* Tombol menu kanan: hover putih transparan + fokus keyboard jelas */
+  .topbtn { display: inline-flex; align-items: center; gap: .375rem; padding: .45rem .7rem; border-radius: .5rem; font-size: .875rem; color: #fff; background: transparent; border: 0; cursor: pointer; white-space: nowrap; }
+  .topbtn:hover { background: rgba(255, 255, 255, .12); }
+  .topbtn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .loginbtn { background: #fff; color: #064e3b; font-weight: 600; }
+  .loginbtn:hover { background: #ecfdf5; }
+  .loginbtn:focus-visible { outline: 2px solid #064e3b; outline-offset: 2px; }
   /* Swatch legenda: warnanya diisi via JS dari database (bukan hardcode CSS) */
   .legend-swatch { width: 18px; height: 14px; border: 1px solid #9ca3af; flex-shrink: 0; }
   /* Tabel popup identify (gaya sendiri agar tidak tergantung JIT Tailwind di dalam popup) */
@@ -26,7 +56,7 @@
   .identify-table th, .identify-table td { border: 1px solid #d1d5db; padding: 3px 6px; text-align: left; vertical-align: top; }
   .identify-table th { background: #f3f4f6; white-space: nowrap; }
   /* Kontrol basemap (kanan atas) digeser ke bawah kotak pencarian */
-  .leaflet-top.leaflet-right .leaflet-control-layers { margin-top: 56px; }
+  .leaflet-top.leaflet-right .leaflet-control-layers { margin-top: 3.5rem; }
   /* Kontrol kiri bawah (skala, dropdown skala, minimap) mengalah pada panel layer */
   #map-wrap .leaflet-bottom.leaflet-left { left: 0; transition: left .2s ease; }
   #map-wrap.panel-open .leaflet-bottom.leaflet-left { left: 316px; }
@@ -41,27 +71,23 @@
      ganda sudah dihapus (dulu menyebabkan init jalan dua kali) -->
 
 <!-- ===== Top bar: logo + judul di kiri; info, home, login di kanan ===== -->
-<header class="bg-emerald-900 text-white flex items-center justify-between px-3 py-2 z-20 shrink-0">
+<header class="topbar text-white flex items-center justify-between px-3 shrink-0">
   <div class="flex items-center gap-2 min-w-0">
-    <!-- Branding CDK Wilayah Bojonegoro: logo dalam kotak putih + teks bertingkat -->
+    <!-- Logo dalam kotak putih; disembunyikan bila file tak ada -->
     <div class="bg-white rounded-xl p-1 shrink-0">
-      <img src="assets/logo.png" alt="Logo CDK Wilayah Bojonegoro" class="w-9 h-9 rounded-lg object-cover" onerror="this.parentElement.style.display='none'">
+      <img src="assets/logo.png" alt="Logo CDK Wilayah Bojonegoro" class="brand-logo rounded-lg" onerror="this.parentElement.style.display='none'">
     </div>
     <div class="min-w-0 leading-tight">
-      <p class="font-bold text-sm sm:text-base leading-tight">CDK Wilayah</p>
-      <p class="font-bold text-sm sm:text-base leading-tight">Bojonegoro</p>
-      <p class="text-[10px] sm:text-[11px] text-emerald-200 leading-tight">DISHUT PROV. JATIM</p>
-      <p class="text-[10px] sm:text-[11px] text-emerald-200 truncate leading-tight" x-text="mapTitle">Memuat…</p>
+      <!-- Baris 1: judul dinamis dari tabel maps. Baris 2: instansi (statis, diizinkan). -->
+      <h1 class="brand-title" x-text="mapTitle">Memuat…</h1>
+      <p class="brand-sub">CDK Wilayah Bojonegoro · Dishut Prov. Jatim</p>
     </div>
   </div>
-  <div class="flex items-center gap-1 sm:gap-2">
-    <button @click="infoOpen = true" title="Info peta"
-            class="px-2 py-1 rounded hover:bg-emerald-700 text-sm">ⓘ <span class="hidden sm:inline">Info</span></button>
-    <button @click="goHome()" title="Kembali ke tampilan awal"
-            class="px-2 py-1 rounded hover:bg-emerald-700 text-sm">⌂ <span class="hidden sm:inline">Home</span></button>
-    <a href="admin/login.php" title="Login admin"
-       class="px-2 py-1 rounded hover:bg-emerald-700 text-sm">👤 <span class="hidden sm:inline">Login</span></a>
-  </div>
+  <nav class="flex items-center gap-1 sm:gap-2 shrink-0" aria-label="Menu peta">
+    <button class="topbtn" @click="infoOpen = true" title="Info peta" aria-label="Info peta">ⓘ <span class="hidden sm:inline">Info</span></button>
+    <button class="topbtn" @click="goHome()" title="Kembali ke tampilan awal" aria-label="Kembali ke tampilan awal">⌂ <span class="hidden sm:inline">Home</span></button>
+    <a class="topbtn loginbtn" href="admin/login.php" title="Login admin" aria-label="Login admin">👤 <span class="hidden sm:inline">Login</span></a>
+  </nav>
 </header>
 
 <!-- ===== Area peta + panel layer ===== -->
