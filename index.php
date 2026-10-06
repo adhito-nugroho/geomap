@@ -994,13 +994,14 @@ function webgis() {
       const pts = this.measure.points;
       this.measure.layer.clearLayers();
       if (pts.length === 0) return;
-      const opts = { color: '#e11d48', weight: 3, pane: 'markerPane' };
+      // interactive:false agar garis hasil ukur tidak menghalangi klik popup layer di bawahnya
+      const opts = { color: '#e11d48', weight: 3, pane: 'markerPane', interactive: false };
       if (this.measure.mode === 'area' && pts.length >= 3) {
         L.polygon(pts, { ...opts, fillOpacity: 0.15 }).addTo(this.measure.layer);
       } else if (pts.length >= 2 || this.measure.mode === 'distance') {
         L.polyline(pts, opts).addTo(this.measure.layer);
       }
-      L.circleMarker(pts[pts.length - 1], { radius: 4, color: '#e11d48', fillColor: '#fff', fillOpacity: 1, pane: 'markerPane' }).addTo(this.measure.layer);
+      L.circleMarker(pts[pts.length - 1], { radius: 4, color: '#e11d48', fillColor: '#fff', fillOpacity: 1, pane: 'markerPane', interactive: false }).addTo(this.measure.layer);
       this.measure.result = this.measureText();
     },
     measureText() {
