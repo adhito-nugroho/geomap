@@ -65,6 +65,32 @@
     #map-wrap.panel-open .leaflet-bottom.leaflet-left { left: 0; }
   }
   input[type="range"] { accent-color: #047857; }
+  /* Toolbar vertikal kanan (ukur, export, bagikan, cetak) */
+  .map-toolbar { position: absolute; right: .5rem; top: 7.5rem; z-index: 10; display: flex; flex-direction: column; gap: .375rem; }
+  .map-toolbar button { width: 40px; height: 40px; border-radius: .5rem; background: #fff; border: 1px solid #e5e7eb; box-shadow: 0 1px 4px rgba(0,0,0,.25); font-size: 18px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #111827; }
+  .map-toolbar button:hover { background: #f3f4f6; }
+  .map-toolbar button.active { background: #047857; color: #fff; border-color: #047857; }
+  .map-toolbar button:focus-visible { outline: 2px solid #047857; outline-offset: 2px; }
+  /* Panel hasil ukur + toast + loading */
+  .measure-panel { position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 10; }
+  .spinner { width: 36px; height: 36px; border-radius: 50%; border: 4px solid #d1fae5; border-top-color: #047857; animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* Target sentuh >=40px di mobile untuk kontrol Leaflet juga */
+  @media (max-width: 767px) {
+    .leaflet-bar a { width: 40px !important; height: 40px !important; line-height: 40px !important; }
+    .map-toolbar { top: auto; bottom: 3rem; right: 50%; transform: translateX(50%); flex-direction: row; }
+  }
+  /* Cetak: hanya peta + header + legenda + atribusi + skala */
+  #print-header, #print-legend { display: none; }
+  @media print {
+    aside, #map-search, .map-toolbar, .measure-panel, #toast,
+    .leaflet-control-zoom, .map-tools, .leaflet-control-minimap,
+    .leaflet-control-layers, .scale-select { display: none !important; }
+    #print-header, #print-legend { display: block !important; }
+    #map-wrap { height: auto; }
+    body { overflow: visible; }
+    .legend-swatch { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
 </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden" x-data="webgis()">
@@ -97,7 +123,7 @@
   <div id="map"></div>
 
   <!-- Kotak pencarian lokasi (kanan atas peta, Nominatim via /api/search.php) -->
-  <div class="absolute top-2 right-2 z-10 w-64 max-w-[70vw]">
+  <div id="map-search" class="absolute top-2 right-2 z-10 w-64 max-w-[70vw]">
     <input x-model="searchQuery" @input="onSearchInput()" @keydown.escape="clearSearch()"
            placeholder="Search by location name" autocomplete="off"
            class="w-full rounded shadow-lg border px-3 py-2 text-sm bg-white">
@@ -110,6 +136,69 @@
     </ul>
     <p x-show="searchNote" class="mt-1 text-xs bg-white/90 rounded px-2 py-1 shadow" x-text="searchNote"></p>
   </div>
+
+  <!-- Toolbar kanan: ukur, export, bagikan, cetak -->
+  <div class="map-toolbar" role="toolbar" aria-label="Alat peta">
+    <button @click="startMeasure('distance')" :class="{ 'active': measure.active && measure.mode === 'distance' }"
+            title="Ukur jarak" aria-label="Ukur jarak">📏</button>
+    <button @click="startMeasure('area')" :class="{ 'active': measure.active && measure.mode === 'area' }"
+            title="Ukur luas" aria-label="Ukur luas">▦</button>
+    <button @click="exportOpen = true" title="Export GeoJSON layer aktif" aria-label="Export GeoJSON">⤓</button>
+    <button @click="shareLink()" title="Bagikan tautan peta" aria-label="Bagikan tautan">🔗</button>
+    <button @click="doPrint()" title="Cetak peta" aria-label="Cetak peta">🖨</button>
+  </div>
+
+  <!-- Panel hasil ukur -->
+  <div x-show="measure.active || measure.result" class="measure-panel bg-white rounded shadow-lg px-3 py-2 text-sm max-w-[92vw]" x-transition>
+    <p class="font-medium" x-text="measure.active ? 'Klik peta untuk menambah titik (klik ganda / Selesai untuk mengakhiri)…' : measure.result"></p>
+    <p class="text-xs text-gray-500 italic">Hasil ukur bersifat indikatif.</p>
+    <div class="flex gap-2 mt-1.5">
+      <button x-show="measure.active" @click="measureFinish()" class="bg-emerald-700 text-white rounded px-3 py-1.5 min-h-[40px]">Selesai</button>
+      <button @click="measureClear()" class="bg-gray-200 rounded px-3 py-1.5 min-h-[40px]">Hapus</button>
+    </div>
+  </div>
+
+  <!-- Dialog export GeoJSON -->
+  <div x-show="exportOpen" class="absolute inset-0 z-30 flex items-center justify-center bg-black/40 p-4"
+       @click.self="exportOpen = false" x-transition>
+    <div class="bg-white rounded shadow-xl p-4 max-w-sm w-full text-sm">
+      <h3 class="font-bold mb-1">Export GeoJSON</h3>
+      <p class="text-gray-600 mb-2">Pilih layer yang sedang tampil:</p>
+      <template x-if="exportLayers().length === 0">
+        <p class="text-gray-500">Tidak ada layer aktif. Centang dulu layer di panel kiri.</p>
+      </template>
+      <ul class="space-y-1 max-h-48 overflow-y-auto mb-2">
+        <template x-for="l in exportLayers()" :key="l.id">
+          <li><label class="flex items-center gap-2 cursor-pointer border rounded px-2 py-1.5">
+            <input type="radio" name="exp-layer" :value="l.id" x-model="exportId" class="accent-emerald-700">
+            <span x-text="l.nama"></span>
+          </label></li>
+        </template>
+      </ul>
+      <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-3">Data ini versi tampilan (disederhanakan, kolom terbatas), bukan data resmi untuk perhitungan luas atau dokumen legal.</p>
+      <div class="flex gap-2">
+        <button @click="downloadExport()" :disabled="!exportId" class="bg-emerald-700 text-white rounded px-3 py-1.5 min-h-[40px] disabled:opacity-50">Unduh</button>
+        <button @click="exportOpen = false" class="bg-gray-200 rounded px-3 py-1.5 min-h-[40px]">Batal</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast kecil -->
+  <div id="toast" x-show="toastMsg" x-transition
+       class="absolute bottom-16 left-1/2 -translate-x-1/2 z-20 bg-emerald-900 text-white text-sm rounded px-3 py-2 shadow" x-text="toastMsg"></div>
+
+  <!-- Overlay loading saat data peta dimuat -->
+  <div x-show="bootLoading" class="absolute inset-0 z-20 bg-white/80 flex flex-col items-center justify-center gap-3">
+    <div class="spinner" role="status" aria-label="Memuat"></div>
+    <p class="text-sm text-gray-600" x-text="loadingMsg">Memuat…</p>
+  </div>
+
+  <!-- Kepala + legenda khusus cetak -->
+  <div id="print-header">
+    <h1 style="font-size:18px;font-weight:bold;" x-text="mapTitle"></h1>
+    <p style="font-size:12px;">Tanggal cetak: <span id="print-date"></span> · Skala tampilan: <span id="print-scale"></span></p>
+  </div>
+  <div id="print-legend"></div>
 
   <!-- Panel kiri (drawer di layar kecil): judul + tree group/layer + legenda -->
   <aside x-show="panelOpen" x-transition
@@ -213,6 +302,19 @@ function webgis() {
     searchTimer: null,
     locateLayer: null,
     scaleSelect: null,
+    scaleText: '',
+    currentBase: 'osm',
+    // Loading overlay: tampil selama konfigurasi + layer awal dimuat
+    bootLoading: true,
+    loadingMsg: 'Memuat konfigurasi…',
+    loadTotal: 0,
+    loadDone: 0,
+    toastMsg: '',
+    toastTimer: null,
+    exportOpen: false,
+    exportId: null,
+    // Ukur manual (tanpa library tambahan): polyline jarak + polygon luas geodesik
+    measure: { active: false, mode: null, points: [], layer: null },
 
     async init() {
       // Guard ganda: cegah inisialisasi dua kali (pernah terjadi via x-init + auto-init).
@@ -226,12 +328,29 @@ function webgis() {
         cfg = await res.json();
       } catch (e) {
         this.error = 'Gagal memuat konfigurasi peta. Pastikan migrate.php sudah dijalankan.';
+        this.bootLoading = false;
         return;
       }
       this.mapTitle = cfg.map.judul || 'Peta Persetujuan Perhutanan Sosial';
       document.title = this.mapTitle;
       this.homeView = { lat: cfg.map.center_lat, lng: cfg.map.center_lng, zoom: cfg.map.zoom };
       this.hiddenFields = (cfg.hidden_fields || []).map((s) => String(s).toLowerCase());
+      // Pulihkan state dari URL hash (fitur bagikan); nilai invalid diabaikan
+      const hh = this.parseHash();
+      if (hh.c) {
+        const p = hh.c.split(',').map(Number);
+        if (p.length === 3 && p.every(Number.isFinite)
+            && p[0] >= -90 && p[0] <= 90 && p[1] >= -180 && p[1] <= 180
+            && p[2] >= 0 && p[2] <= 19) {
+          this.homeView = { lat: p[0], lng: p[1], zoom: Math.round(p[2]) };
+        }
+      }
+      const baseList = ['osm', 'esri', 'hot'];
+      this.currentBase = baseList.includes(hh.b) ? hh.b : null;
+      if (!this.currentBase) {
+        const d = cfg.map.basemap_default;
+        this.currentBase = (d === 'esri' || d === 'hot') ? d : 'osm';
+      }
 
       // Basemap: OSM default; Esri satelit + OSM Humanitarian sebagai opsi
       const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -249,16 +368,24 @@ function webgis() {
         zoom: this.homeView.zoom,
         zoomControl: false, // diganti kontrol zoom kustom kanan bawah (Fase 3)
         preferCanvas: true, // performa untuk poligon besar
-        layers: [(cfg.map.basemap_default === 'esri' ? esri : (cfg.map.basemap_default === 'hot' ? hot : osm))],
+        layers: [(this.currentBase === 'esri' ? esri : (this.currentBase === 'hot' ? hot : osm))],
       });
       L.control.layers(basemaps).addTo(this.map);
       L.control.zoom({ position: 'bottomright' }).addTo(this.map);
+      // Lacak basemap aktif untuk state bagikan (nama -> kunci)
+      const baseNameKeys = { 'OpenStreetMap': 'osm', 'Esri Satelit': 'esri', 'OSM Humanitarian': 'hot' };
+      this.map.on('baselayerchange', (e) => {
+        this.currentBase = baseNameKeys[e.name] || 'osm';
+        this.saveHash();
+      });
+      // Simpan state ke hash setiap peta digeser
+      this.map.on('moveend', () => this.saveHash());
 
       // Tombol locate me / zoom extent / fullscreen (kanan bawah, vanilla Leaflet)
       const self = this;
       const ToolBtns = L.Control.extend({
         onAdd() {
-          const d = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+          const d = L.DomUtil.create('div', 'leaflet-bar leaflet-control map-tools');
           const mk = (label, title, fn) => {
             const b = L.DomUtil.create('button', '', d);
             b.type = 'button'; b.title = title; b.innerHTML = label;
@@ -318,11 +445,41 @@ function webgis() {
           this.paneOrder[l.id] = this.paneTotal++;
         }
       }
+      // Terapkan layer + opacity dari hash bagikan (menimpa default DB)
+      if (hh.l !== undefined) {
+        const wanted = {};
+        for (const item of hh.l.split(',')) {
+          const [idS, opS] = item.split(':');
+          const id = parseInt(idS, 10);
+          const op = parseInt(opS, 10);
+          if (Number.isInteger(id)) wanted[id] = Number.isInteger(op) ? Math.min(100, Math.max(0, op)) : 100;
+        }
+        for (const g of this.groups) {
+          for (const l of g.layers) {
+            if (l.id in wanted) {
+              l.checked = true;
+              l.opacity = wanted[l.id];
+            } else {
+              l.checked = false;
+            }
+          }
+        }
+      }
+      // Hitung beban loading awal untuk overlay
+      this.loadTotal = 0;
+      for (const g of this.groups) {
+        for (const l of g.layers) {
+          if (l.checked) this.loadTotal++;
+        }
+      }
+      this.loadDone = 0;
+      this.loadingMsg = this.loadTotal > 0 ? ('Memuat layer 0/' + this.loadTotal + '…') : 'Menyiapkan peta…';
       for (const g of this.groups) {
         for (const l of g.layers) {
           if (l.checked) await this.toggleLayer(l);
         }
       }
+      this.bootLoading = false;
     },
 
     // Cari kelas warna untuk satu fitur berdasarkan style_field (data dari DB).
@@ -357,8 +514,16 @@ function webgis() {
       };
     },
 
-    // Terapkan opacity slider ke layer yang sudah dimuat (dikalikan style layer)
+    // Terapkan opacity slider (throttle rAF agar slider berat tidak redraw berlebih)
     applyOpacity(layer) {
+      if (layer._opRaf) return;
+      layer._opRaf = requestAnimationFrame(() => {
+        layer._opRaf = null;
+        this.applyOpacityNow(layer);
+        this.saveHash();
+      });
+    },
+    applyOpacityNow(layer) {
       const gl = this.leaflets[layer.id];
       if (!gl) return;
       const num = (v, d) => {
@@ -435,6 +600,18 @@ function webgis() {
       }
       this.reorder();
       this.maybeFit();
+      this.bumpBoot();
+      this.saveHash();
+    },
+    // Kemajuan overlay loading awal (dipanggil tiap toggleLayer selesai)
+    bumpBoot() {
+      if (!this.bootLoading) return;
+      this.loadDone++;
+      if (this.loadDone >= this.loadTotal) {
+        this.bootLoading = false;
+      } else {
+        this.loadingMsg = 'Memuat layer ' + this.loadDone + '/' + this.loadTotal + '…';
+      }
     },
 
     // Fallback viewport: setelah layer pertama dimuat, jika peta masih di pusat
@@ -572,9 +749,10 @@ function webgis() {
       if (!sel || !this.map) return;
       const lat = this.map.getCenter().lat * Math.PI / 180;
       const n = Math.round(156543.03392 * Math.cos(lat) / Math.pow(2, this.map.getZoom()) / 0.0002645833);
+      this.scaleText = '1:' + n.toLocaleString('id-ID');
       sel.innerHTML = '';
       const cur = document.createElement('option');
-      cur.textContent = '≈ 1:' + n.toLocaleString('id-ID');
+      cur.textContent = '≈ ' + this.scaleText;
       cur.disabled = true; cur.selected = true;
       sel.appendChild(cur);
       for (const p of [10000, 25000, 50000, 72224, 100000, 250000]) {
@@ -585,7 +763,7 @@ function webgis() {
       }
     },
     initScaleControl() {
-      const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+      const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control scale-select');
       div.style.background = '#fff';
       div.style.padding = '2px 4px';
       const sel = L.DomUtil.create('select', '', div);
@@ -603,6 +781,237 @@ function webgis() {
       this.map.addControl(new C({ position: 'bottomleft' }));
       this.map.on('moveend zoomend', () => this.updateScaleLabel());
       this.updateScaleLabel();
+    },
+
+    // ---- Toast kecil ----
+    toast(msg) {
+      this.toastMsg = msg;
+      clearTimeout(this.toastTimer);
+      this.toastTimer = setTimeout(() => { this.toastMsg = ''; }, 3500);
+    },
+
+    // ---- Bagikan link: state di URL hash ----
+    parseHash() {
+      const h = {};
+      try {
+        const s = (location.hash || '').replace(/^#/, '');
+        for (const part of s.split('&')) {
+          if (!part) continue;
+          const i = part.indexOf('=');
+          if (i > 0) h[part.slice(0, i)] = decodeURIComponent(part.slice(i + 1));
+        }
+      } catch (e) { /* abaikan hash rusak */ }
+      return h;
+    },
+    saveHash() {
+      if (!this.map) return;
+      const c = this.map.getCenter();
+      const parts = ['c=' + c.lat.toFixed(5) + ',' + c.lng.toFixed(5) + ',' + this.map.getZoom(),
+        'b=' + this.currentBase];
+      const ll = [];
+      for (const g of this.groups) {
+        for (const l of g.layers) {
+          if (l.checked) ll.push(l.id + ':' + (l.opacity ?? 100));
+        }
+      }
+      if (ll.length) parts.push('l=' + ll.join(','));
+      history.replaceState(null, '', '#' + parts.join('&'));
+    },
+    shareLink() {
+      this.saveHash();
+      const url = location.href;
+      const done = () => this.toast('Tautan peta disalin.');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(done).catch(() => this.shareFallback(url));
+      } else {
+        this.shareFallback(url);
+      }
+    },
+    shareFallback(url) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        if (document.execCommand('copy')) {
+          document.body.removeChild(ta);
+          this.toast('Tautan peta disalin.');
+          return;
+        }
+        document.body.removeChild(ta);
+      } catch (e) { /* lanjut ke prompt manual */ }
+      const manual = prompt('Salin tautan peta ini:', url);
+      if (manual !== null) this.toast('Tautan siap dibagikan.');
+    },
+
+    // ---- Ukur manual: jarak (haversine) + luas geodesik (spherical excess) ----
+    // Tanpa library tambahan: hanya butuh dua operasi ini.
+    hav(a, b) {
+      const R = 6378137;
+      const dLa = (b.lat - a.lat) * Math.PI / 180;
+      const dLo = (b.lng - a.lng) * Math.PI / 180;
+      const s = Math.sin(dLa / 2) * Math.sin(dLa / 2)
+        + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180)
+        * Math.sin(dLo / 2) * Math.sin(dLo / 2);
+      return 2 * R * Math.asin(Math.sqrt(s));
+    },
+    geodesicArea(latlngs) {
+      const R = 6378137;
+      const d2r = Math.PI / 180;
+      let area = 0;
+      if (latlngs.length > 2) {
+        for (let i = 0; i < latlngs.length; i++) {
+          const p1 = latlngs[i], p2 = latlngs[(i + 1) % latlngs.length];
+          area += (p2.lng - p1.lng) * d2r * (2 + Math.sin(p1.lat * d2r) + Math.sin(p2.lat * d2r));
+        }
+        area = area * R * R / 2;
+      }
+      return Math.abs(area);
+    },
+    fmtDist(m) {
+      return m < 1000
+        ? m.toLocaleString('id-ID', { maximumFractionDigits: 1 }) + ' m'
+        : (m / 1000).toLocaleString('id-ID', { maximumFractionDigits: 2 }) + ' km';
+    },
+    fmtArea(m2) {
+      if (m2 < 10000) return m2.toLocaleString('id-ID', { maximumFractionDigits: 1 }) + ' m²';
+      if (m2 < 1000000) {
+        return (m2 / 10000).toLocaleString('id-ID', { maximumFractionDigits: 2 }) + ' ha'
+          + ' (' + m2.toLocaleString('id-ID', { maximumFractionDigits: 0 }) + ' m²)';
+      }
+      return (m2 / 1000000).toLocaleString('id-ID', { maximumFractionDigits: 2 }) + ' km²';
+    },
+    startMeasure(mode) {
+      if (this.measure.active && this.measure.mode === mode) {
+        this.measureClear();
+        return;
+      }
+      this.measureClear();
+      this.measure.active = true;
+      this.measure.mode = mode;
+      this.measure.result = '';
+      if (!this.measure.layer) {
+        this.measure.layer = L.layerGroup([], { pane: 'markerPane' }).addTo(this.map);
+      }
+      this.map.getContainer().style.cursor = 'crosshair';
+      this.map.doubleClickZoom.disable();
+      this._mClick = (e) => this.measureAdd(e.latlng);
+      this._mDbl = () => this.measureFinish();
+      this._mEsc = (e) => { if (e.key === 'Escape') this.measureClear(); };
+      this.map.on('click', this._mClick);
+      this.map.on('dblclick', this._mDbl);
+      document.addEventListener('keydown', this._mEsc);
+    },
+    measureAdd(ll) {
+      this.measure.points.push(ll);
+      this.measureDraw();
+    },
+    measureDraw() {
+      const pts = this.measure.points;
+      this.measure.layer.clearLayers();
+      if (pts.length === 0) return;
+      const opts = { color: '#e11d48', weight: 3, pane: 'markerPane' };
+      if (this.measure.mode === 'area' && pts.length >= 3) {
+        L.polygon(pts, { ...opts, fillOpacity: 0.15 }).addTo(this.measure.layer);
+      } else if (pts.length >= 2 || this.measure.mode === 'distance') {
+        L.polyline(pts, opts).addTo(this.measure.layer);
+      }
+      L.circleMarker(pts[pts.length - 1], { radius: 4, color: '#e11d48', fillColor: '#fff', fillOpacity: 1, pane: 'markerPane' }).addTo(this.measure.layer);
+      this.measure.result = this.measureText();
+    },
+    measureText() {
+      const pts = this.measure.points;
+      if (this.measure.mode === 'distance') {
+        let total = 0;
+        for (let i = 1; i < pts.length; i++) total += this.hav(pts[i - 1], pts[i]);
+        return 'Jarak: ' + this.fmtDist(total);
+      }
+      if (pts.length < 3) return 'Tambahkan minimal 3 titik untuk luas…';
+      return 'Luas: ' + this.fmtArea(this.geodesicArea(pts));
+    },
+    measureFinish() {
+      if (!this.measure.active || this.measure.points.length === 0) {
+        this.measureClear();
+        return;
+      }
+      this.measure.result = this.measureText();
+      this.measureStop();
+    },
+    measureStop() {
+      this.measure.active = false;
+      this.map.getContainer().style.cursor = '';
+      if (this.map.doubleClickZoom) this.map.doubleClickZoom.enable();
+      if (this._mClick) this.map.off('click', this._mClick);
+      if (this._mDbl) this.map.off('dblclick', this._mDbl);
+      if (this._mEsc) document.removeEventListener('keydown', this._mEsc);
+      this._mClick = this._mDbl = this._mEsc = null;
+    },
+    measureClear() {
+      this.measureStop();
+      this.measure.points = [];
+      this.measure.result = '';
+      if (this.measure.layer) this.measure.layer.clearLayers();
+    },
+
+    // ---- Export GeoJSON layer aktif (versi tampilan dari server) ----
+    exportLayers() {
+      const out = [];
+      for (const g of this.groups) {
+        for (const l of g.layers) {
+          if (l.checked && this.leaflets[l.id]) out.push(l);
+        }
+      }
+      if (this.exportId && !out.some((l) => l.id === this.exportId)) this.exportId = null;
+      if (!this.exportId && out.length === 1) this.exportId = out[0].id;
+      return out;
+    },
+    async downloadExport() {
+      const layer = this.exportLayers().find((l) => l.id === this.exportId);
+      if (!layer) return;
+      try {
+        const res = await fetch('api/geojson.php?layer=' + layer.id);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = String(layer.nama).replace(/[^\w\-]+/g, '_') + '.geojson';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(a.href);
+          a.remove();
+        }, 1000);
+        this.exportOpen = false;
+        this.toast('Layer ' + layer.nama + ' diunduh.');
+      } catch (e) {
+        this.toast('Gagal mengunduh layer.');
+      }
+    },
+
+    // ---- Cetak: window.print + header/legenda khusus cetak ----
+    doPrint() {
+      this.buildPrintLegend();
+      window.print();
+    },
+    buildPrintLegend() {
+      document.getElementById('print-date').textContent =
+        new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+      document.getElementById('print-scale').textContent = this.scaleText || '-';
+      let h = '';
+      for (const g of this.groups) {
+        for (const l of g.layers) {
+          if (!l.checked || !this.leaflets[l.id]) continue;
+          h += '<div style="margin:6px 0;"><b>' + this.esc(l.nama) + '</b>';
+          for (const c of (l.classes || [])) {
+            h += '<div><span class="legend-swatch" style="background:' + c.warna + ';display:inline-block;vertical-align:middle;"></span> '
+              + this.esc(c.label) + '</div>';
+          }
+          h += '</div>';
+        }
+      }
+      document.getElementById('print-legend').innerHTML = h || '<i>Tidak ada layer aktif.</i>';
     },
 
     goHome() {

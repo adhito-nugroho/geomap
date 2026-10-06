@@ -7,7 +7,7 @@ rem    deploy-db.bat                         (folder file ini, full: awal)
 rem    deploy-db.bat "C:\laragon\www\website-cdk\geomap"
 rem    deploy-db.bat --migrations-only       (hanya migrate_002 dst, tanpa seed)
 rem    deploy-db.bat "C:\...\geomap" --migrations-only
-rem  Full = migrate.php lalu database\migrate_*.php berurutan.
+rem  Full = migrate.php (skema + seed HANYA bila DB kosong) lalu database\migrate_*.php.
 rem  Syarat: config.php sudah diisi, PHP + MySQL jalan.
 rem ============================================================
 
@@ -51,7 +51,7 @@ if not exist "config.php" (
 )
 
 if "%MODE%"=="migonly" goto :MIGONLY
-echo [INFO] migrate.php (full: skema + seed) ...
+echo [INFO] migrate.php (full: skema + seed bila DB kosong) ...
 "%PHPBIN%" migrate.php
 if errorlevel 1 (echo [GAGAL] migrate.php gagal. & exit /b 1)
 

@@ -84,3 +84,16 @@ Sama seperti import di atas + isi `layer_classes` sesuai `style_mode`:
 - Field kategori `Kawasan Hutan` diasumsikan bernama `zona` (nilai: HK, HSAL, HL, HPT, HP, HPK, APL, Danau, Tubuh Air). Bisa diganti di admin Fase 4.
 - GeoJSON di `storage/geojson/` masih CONTOH KECIL (1-2 poligon per file) agar migrasi + Fase 2 bisa dites; ganti dengan data asli yang sudah disederhanakan.
 - `require_login()` mengarahkan ke path relatif `login.php` di folder `admin/` (works untuk `geomap.test` maupun subfolder `localhost/geomap`).
+
+## Daftar periksa keamanan sebelum dibuka publik (Cloudflare Tunnel)
+
+Jalankan semua poin ini di server produksi sebelum URL disebar:
+
+- [ ] **Ganti password admin seed.** Password `seed_*_password` di `config.php` hanya untuk instalasi awal. Setelah login pertama, ganti via SQL langsung (belum ada UI ganti password).
+- [ ] **Sesi & cookie.** `includes/helpers.php` sudah mengatur `cookie_httponly=true`, `cookie_samesite=Lax`, dan regenerate ID saat login. Pastikan situs diakses via **HTTPS** (Cloudflare).
+- [ ] **CSRF di semua POST admin.** Login, logout, dan seluruh endpoint `api/admin/*.php` memvalidasi `csrf_token` sesi. Jangan menonaktifkannya.
+- [ ] **Folder upload tidak mengeksekusi PHP.** `storage/geojson/.htaccess` memblokir eksekusi script di folder data — pastikan file `.htaccess` ikut ter-upload ke server.
+- [ ] **`display_errors off` di produksi.** Di `php.ini` server: `display_errors=Off`, `log_errors=On`. API sudah mengembalikan pesan error generik.
+- [ ] **`config.php` tidak ikut commit.** Sudah ada di `.gitignore`; verifikasi dengan `git ls-files config.php` (harus kosong).
+- [ ] **Batasi `/admin`.** Minimal: password kuat + ganti berkala. Opsional: batasi IP via `.htaccess` di folder `admin/`, atau nonaktifkan user `viewer` bila tak dipakai.
+- [ ] **Uji ulang pasca-deploy:** login salah tertolak, endpoint admin tanpa login mengembalikan 403, dan `api/geojson.php?layer=abc` mengembalikan 400.

@@ -72,10 +72,26 @@ try {
     }
     out('schema.sql OK (' . count($statements) . ' statement)', $isCli);
 
-    // 4. Seed data awal
+    // 4. Seed data awal — HANYA bila database masih kosong.
+    // Alasan: deploy menjalankan migrate berulang; seeder yang jalan terus akan
+    // menghidupkan lagi baris bawaan yang sengaja dihapus admin di server.
+    // Paksa dengan: php migrate.php --seed   (CLI saja)
+    $seedForced = $isCli && in_array('--seed', $argv ?? [], true);
+    $needsSeed = $seedForced;
+    if (!$needsSeed) {
+        try {
+            $needsSeed = ((int) $pdo->query('SELECT COUNT(*) FROM maps')->fetchColumn() === 0);
+        } catch (Throwable $e) {
+            $needsSeed = true; // aman: instalasi baru tetap dapat data awal
+        }
+    }
     require_once __DIR__ . '/database/seed.php';
-    foreach (seed_database($pdo) as $line) {
-        out($line, $isCli);
+    if ($needsSeed) {
+        foreach (seed_database($pdo) as $line) {
+            out($line, $isCli);
+        }
+    } else {
+        out('seed dilewati: database sudah terisi (pakai --seed untuk memaksa)', $isCli);
     }
 
     // 5. Ringkasan verifikasi
