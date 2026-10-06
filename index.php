@@ -721,26 +721,50 @@ function webgis() {
     // ---- Pencarian lokasi (Nominatim via /api/search.php, dibatasi Indonesia) ----
     onSearchInput() {
       clearTimeout(this.searchTimer);
+      // Batalkan request sebelumnya agar respons basi tak menimpa hasil terbaru
+      if (this._searchCtl) {
+        try { this._searchCtl.abort(); } catch (e) { /* abaikan */ }
+        this._searchCtl = null;
+      }
       const q = this.searchQuery.trim();
       if (q.length < 3) { this.searchResults = []; this.searchNote = ''; return; }
       this.searchNote = 'Mencari…';
       this.searchTimer = setTimeout(async () => {
         // Batas 15 detik agar UI tak menggantung bila server lambat
         const ctl = new AbortController();
+        this._searchCtl = ctl;
         const kill = setTimeout(() => ctl.abort(), 15000);
         try {
           const res = await fetch('api/search.php?q=' + encodeURIComponent(q), { signal: ctl.signal });
           clearTimeout(kill);
-          const data = await res.json();
-          if (!res.ok) { this.searchNote = data.error || 'Pencarian gagal.'; this.searchResults = []; return; }
+          if (this._searchCtl !== ctl) return; // sudah digantikan ketikan baru
+          let data = null;
+          try {
+            data = await res.json();
+          } catch (e) {
+            data = null;
+          }
+          if (!res.ok) {
+            this.searchNote = (data && data.error) || ('Pencarian gagal (HTTP ' + res.status + ').');
+            this.searchResults = [];
+            return;
+          }
+          if (!Array.isArray(data)) {
+            this.searchNote = 'Respons server tidak valid (HTTP 200).';
+            this.searchResults = [];
+            return;
+          }
           this.searchResults = data;
           this.searchNote = data.length ? '' : 'Tidak ditemukan di Indonesia.';
         } catch (e) {
           clearTimeout(kill);
+          if (this._searchCtl !== ctl) return; // digantikan, diam saja
           this.searchNote = (e && e.name === 'AbortError')
             ? 'Pencarian kehabisan waktu. Periksa koneksi lalu coba lagi.'
             : 'Pencarian gagal.';
           this.searchResults = [];
+        } finally {
+          if (this._searchCtl === ctl) this._searchCtl = null;
         }
       }, 400);
     },
