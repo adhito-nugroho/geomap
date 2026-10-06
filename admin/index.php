@@ -25,7 +25,10 @@ $user = current_user();
 </head>
 <body class="min-h-screen bg-gray-100" x-data="adminApp()" x-init="load(); loadMapForm()">
 <header class="bg-emerald-900 text-white px-4 py-3 flex flex-wrap items-center justify-between gap-2">
-  <h1 class="font-bold">Admin WebGIS <span class="font-normal text-emerald-200">/ Kelola Peta</span></h1>
+  <div class="flex items-center gap-2">
+    <img src="../assets/logo.png" alt="Logo CDK Wilayah Bojonegoro" class="w-8 h-8 rounded-full bg-white object-cover" onerror="this.style.display='none'">
+    <h1 class="font-bold">Admin WebGIS <span class="font-normal text-emerald-200">/ CDK Wilayah Bojonegoro</span></h1>
+  </div>
   <div class="flex items-center gap-3 text-sm">
     <a href="../index.php" class="underline">Lihat viewer</a>
     <span><?= e($user['username']) ?> (<?= e($user['role']) ?>)</span>

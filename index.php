@@ -43,11 +43,12 @@
 <!-- ===== Top bar: logo + judul di kiri; info, home, login di kanan ===== -->
 <header class="bg-emerald-900 text-white flex items-center justify-between px-3 py-2 z-20 shrink-0">
   <div class="flex items-center gap-2 min-w-0">
-    <!-- Logo pohon sederhana (inline SVG) -->
-    <svg class="w-7 h-7 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M12 2 L19 12 H14 V22 H10 V12 H5 Z" fill="#34d399" stroke="#065f46"/>
-    </svg>
-    <h1 class="font-bold text-sm sm:text-base truncate" x-text="mapTitle">Memuat…</h1>
+    <!-- Logo CDK Wilayah Bojonegoro (disembunyikan otomatis bila file tak ada) -->
+    <img src="assets/logo.png" alt="Logo CDK Wilayah Bojonegoro" class="w-9 h-9 shrink-0 rounded-full bg-white object-cover" onerror="this.style.display='none'">
+    <div class="min-w-0 leading-tight">
+      <h1 class="font-bold text-sm sm:text-base truncate" x-text="mapTitle">Memuat…</h1>
+      <p class="text-[11px] sm:text-xs text-emerald-200 truncate">CDK Wilayah Bojonegoro</p>
+    </div>
   </div>
   <div class="flex items-center gap-1 sm:gap-2">
     <button @click="infoOpen = true" title="Info peta"
