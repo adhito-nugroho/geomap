@@ -250,6 +250,47 @@ $user = current_user();
       <p x-show="ed.popupSel.length" class="text-xs text-gray-500">Dipilih: <code x-text="ed.popupSel.join(', ')"></code></p>
     </div>
 
+    <!-- Format popup identify: judul + label + format angka per kolom -->
+    <div x-show="ed.id" class="border-t pt-3 space-y-2">
+      <h4 class="font-semibold">Format popup identify</h4>
+      <p class="text-xs text-gray-500">Kosong = popup tampil seperti biasa. Klik "Muat field dari file" dulu bila daftar masih kosong.</p>
+      <label class="block text-xs">Judul popup (opsional)
+        <select x-model="ed.popTitle" class="mt-1 w-full border rounded px-2 py-1.5 bg-white">
+          <option value="">(tanpa judul)</option>
+          <template x-for="c in ed.popupCols" :key="c.name">
+            <option :value="c.name" x-text="c.name"></option>
+          </template>
+        </select></label>
+      <div class="overflow-x-auto">
+      <table class="w-full text-xs border min-w-[560px]">
+        <thead class="bg-gray-50">
+          <tr><th class="border px-1 py-1 text-left">Kolom</th><th class="border px-1 py-1 text-left">Label</th>
+              <th class="border px-1 py-1">Tampil</th><th class="border px-1 py-1">Urut</th>
+              <th class="border px-1 py-1">Format</th><th class="border px-1 py-1">Desimal</th>
+              <th class="border px-1 py-1 text-left">Satuan</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="f in ed.popFmt" :key="f.key">
+            <tr>
+              <td class="border px-1 py-1 font-mono" x-text="f.key"></td>
+              <td class="border px-1 py-1"><input x-model="f.label" class="w-full border rounded px-1"></td>
+              <td class="border px-1 py-1 text-center"><input type="checkbox" x-model="f.visible" class="w-4 h-4"></td>
+              <td class="border px-1 py-1"><input type="number" min="0" x-model.number="f.order" class="w-14 border rounded px-1"></td>
+              <td class="border px-1 py-1">
+                <select x-model="f.format" class="border rounded px-1 bg-white">
+                  <option value="teks">teks</option>
+                  <option value="angka">angka</option>
+                </select></td>
+              <td class="border px-1 py-1"><input type="number" min="0" max="10" x-model.number="f.decimals" class="w-14 border rounded px-1"></td>
+              <td class="border px-1 py-1"><input x-model="f.unit" placeholder="" class="w-full border rounded px-1"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      </div>
+      <button @click="savePopFmt()" class="bg-emerald-700 text-white rounded px-3 py-1.5">Simpan format popup</button>
+    </div>
+
     <!-- Style kategori otomatis -->
     <div x-show="ed.id && (ed.style_mode === 'categorized' || singleClass())" class="border-t pt-3 space-y-2">
       <h4 class="font-semibold">Kelas legenda</h4>
@@ -313,7 +354,7 @@ function adminApp() {
           fill_opacity: 0.65, fill_enabled: true,
           style_mode: 'single', style_field: '', file_geojson: '',
           classes: [], props: [], upload: null, classWarn: '',
-          popupCols: [], popupSel: [] },
+          popupCols: [], popupSel: [], popTitle: '', popFmt: [] },
     newClass: { nilai: '', label: '', warna: '#3388ff', outline_warna: '#ffffff', urutan: 99 },
 
     toast(msg, isErr = false) {
@@ -373,6 +414,8 @@ function adminApp() {
             style_mode: l.style_mode,
             style_field: l.style_field || '', file_geojson: l.file_geojson || '',
             classes: JSON.parse(JSON.stringify(l.classes || [])),
+            popTitle: (l.popup_config && l.popup_config.title_field) || '',
+            popFmt: JSON.parse(JSON.stringify((l.popup_config && l.popup_config.fields) || [])),
           });
           break;
         }
@@ -464,6 +507,7 @@ function adminApp() {
     openEditor(id, presetGroup = null) {
       this.ed.upload = null; this.ed.classWarn = ''; this.ed.props = [];
       this.ed.popupCols = []; this.ed.popupSel = [];
+      this.ed.popTitle = ''; this.ed.popFmt = [];
       this.resetZc();
       this.newClass = { nilai: '', label: '', warna: '#3388ff', outline_warna: '#ffffff', urutan: 99 };
       if (id === null) {
@@ -554,6 +598,13 @@ function adminApp() {
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         this.ed.popupCols = data.columns || [];
         this.ed.popupSel = data.popup_selected || [];
+        // Gabung kolom file ke format popup (pertahankan pengaturan yang sudah ada)
+        const known = {};
+        this.ed.popFmt.forEach((f) => { known[f.key] = f; });
+        this.ed.popFmt = this.ed.popupCols.map((c, i) => (known[c.name] || {
+          key: c.name, label: c.name, visible: true, order: i + 1,
+          format: 'teks', decimals: 2, unit: '',
+        }));
         // Tampilkan ringkasan ukuran juga bila belum ada hasil upload sesi ini
         if (!this.ed.upload) {
           const mb = (data.size_bytes / 1048576).toFixed(1);
@@ -576,6 +627,16 @@ function adminApp() {
         this.toast(data.count === 0
           ? 'Pilihan dikosongkan: semua kolom disajikan.'
           : 'Kolom popup disimpan: ' + data.count + ' kolom.');
+      } catch (e) { this.toast(e.message, true); }
+    },
+    async savePopFmt() {
+      try {
+        await this.api('../api/admin/popup_config.php', {
+          layer_id: this.ed.id, title_field: this.ed.popTitle, fields: this.ed.popFmt,
+        });
+        this.toast('Format popup disimpan.');
+        await this.refresh();
+        this.syncEditor(this.ed.id);
       } catch (e) { this.toast(e.message, true); }
     },
 

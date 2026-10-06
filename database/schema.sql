@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS layers (
     outline_opacity DECIMAL(3,2) NOT NULL DEFAULT 1.00,
     fill_opacity DECIMAL(3,2) NOT NULL DEFAULT 0.65,
     fill_enabled TINYINT(1) NOT NULL DEFAULT 1,
+    -- Tambahan migrasi 004: format popup identify per layer (JSON, NULL = perilaku lama).
+    popup_config TEXT NULL DEFAULT NULL,
     CONSTRAINT fk_layers_group FOREIGN KEY (group_id)
         REFERENCES layer_groups (id) ON DELETE CASCADE ON UPDATE CASCADE,
     UNIQUE KEY uq_layers_group_nama (group_id, nama),

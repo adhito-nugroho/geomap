@@ -53,9 +53,10 @@
   /* Swatch legenda: warnanya diisi via JS dari database (bukan hardcode CSS) */
   .legend-swatch { width: 18px; height: 14px; border: 1px solid #9ca3af; flex-shrink: 0; }
   /* Tabel popup identify (gaya sendiri agar tidak tergantung JIT Tailwind di dalam popup) */
-  .identify-table { border-collapse: collapse; font-size: 12px; }
-  .identify-table th, .identify-table td { border: 1px solid #d1d5db; padding: 3px 6px; text-align: left; vertical-align: top; }
+  .identify-table { border-collapse: collapse; font-size: 12px; table-layout: fixed; max-width: 100%; }
+  .identify-table th, .identify-table td { border: 1px solid #d1d5db; padding: 3px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
   .identify-table th { background: #f3f4f6; white-space: nowrap; }
+  .identify-title { font-weight: bold; font-size: 13px; margin-bottom: 4px; overflow-wrap: anywhere; }
   /* Kontrol basemap (kanan atas) digeser ke bawah kotak pencarian */
   .leaflet-top.leaflet-right .leaflet-control-layers { margin-top: 3.5rem; }
   /* Kontrol kiri bawah (skala, dropdown skala, minimap) mengalah pada panel layer */
@@ -554,15 +555,65 @@ function webgis() {
       ));
     },
 
-    // Tabel atribut popup identify; field teknis disembunyikan (daftar dari database)
-    popupHtml(props) {
-      const rows = Object.entries(props || {})
-        .filter(([k]) => !this.hiddenFields.includes(String(k).toLowerCase()));
-      if (rows.length === 0) return '<i>Tidak ada atribut tampilan.</i>';
-      return '<table class="identify-table"><tbody>' + rows.map(([k, v]) => (
-        '<tr><th>' + this.esc(k) + '</th><td>'
-        + this.esc(typeof v === 'object' ? JSON.stringify(v) : v) + '</td></tr>'
-      )).join('') + '</tbody></table>';
+    // Tabel atribut popup identify; field teknis disembunyikan (daftar dari database).
+    // Bila layer punya popup_config: tampilkan judul + label/format/satuan sesuai
+    // konfigurasi; nilai field style_field (categorized) dapat kotak warna kelas.
+    // Semua teks di-escape; tanpa config -> perilaku lama.
+    popupHtml(props, layer) {
+      const cfg = (layer && layer.popup_config && Array.isArray(layer.popup_config.fields)
+        && layer.popup_config.fields.length > 0) ? layer.popup_config : null;
+      if (!cfg) {
+        const rows = Object.entries(props || {})
+          .filter(([k]) => !this.hiddenFields.includes(String(k).toLowerCase()));
+        if (rows.length === 0) return '<i>Tidak ada atribut tampilan.</i>';
+        return '<table class="identify-table"><tbody>' + rows.map(([k, v]) => (
+          '<tr><th>' + this.esc(k) + '</th><td>'
+          + this.esc(typeof v === 'object' ? JSON.stringify(v) : v) + '</td></tr>'
+        )).join('') + '</tbody></table>';
+      }
+      const P = props || {};
+      let h = '';
+      const tv = cfg.title_field ? P[cfg.title_field] : undefined;
+      if (tv !== undefined && tv !== null && tv !== '') {
+        h += '<div class="identify-title">' + this.esc(String(tv)) + '</div>';
+      }
+      const fields = [...cfg.fields]
+        .filter((f) => f && f.visible !== false)
+        .sort((a, b) => ((a.order ?? 0) - (b.order ?? 0)));
+      // Warna kelas untuk penanda field style (categorized), dari layer_classes
+      let swatch = null;
+      if (layer && layer.style_mode === 'categorized' && layer.style_field && P[layer.style_field] !== undefined) {
+        const v = String(P[layer.style_field] ?? '').trim().toLowerCase();
+        const cls = (layer.classes || []).find((c) => String(c.nilai ?? '').trim().toLowerCase() === v);
+        if (cls) swatch = { field: layer.style_field, color: cls.warna };
+      }
+      h += '<table class="identify-table"><tbody>';
+      for (const f of fields) {
+        if (!(f.key in P)) continue;
+        let v = P[f.key];
+        if (v !== null && typeof v === 'object') v = JSON.stringify(v);
+        if ((f.format || 'teks') === 'angka') {
+          const n = Number(String(v).replace(/\s/g, '').replace(',', '.'));
+          if (Number.isFinite(n)) {
+            const d = Math.min(10, Math.max(0, f.decimals ?? 2));
+            v = n.toLocaleString('id-ID', { minimumFractionDigits: d, maximumFractionDigits: d });
+          } else {
+            v = String(v ?? '');
+          }
+        } else {
+          v = String(v ?? '');
+        }
+        if (f.unit) v = v + ' ' + f.unit;
+        let cell = this.esc(v);
+        if (swatch && String(f.key) === String(swatch.field)) {
+          // Warna dari DB sudah divalidasi heksadesimal saat simpan; lapis pengaman di sini
+          const col = /^#[0-9a-fA-F]{6}$/.test(swatch.color) ? swatch.color : '#9ca3af';
+          cell = '<span class="legend-swatch" style="background:' + col
+            + ';display:inline-block;vertical-align:middle;"></span> ' + cell;
+        }
+        h += '<tr><th>' + this.esc(f.label || f.key) + '</th><td>' + cell + '</td></tr>';
+      }
+      return h + '</tbody></table>';
     },
 
     // Layer aktif = dicentang DAN zoom peta sudah mencapai min_zoom (dari DB)
@@ -587,7 +638,7 @@ function webgis() {
             // Identify: klik fitur = popup tabel atribut
             onEachFeature: (f, ly) => {
               // maxWidth menyesuaikan layar HP agar popup tidak meluap
-              ly.bindPopup(this.popupHtml(f.properties), { maxWidth: Math.min(300, window.innerWidth - 48) });
+              ly.bindPopup(this.popupHtml(f.properties, layer), { maxWidth: Math.min(300, window.innerWidth - 48) });
             },
           });
         } catch (e) {

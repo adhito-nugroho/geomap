@@ -24,7 +24,8 @@ try {
     $stmtLayers = $pdo->prepare(
         'SELECT id, nama, tipe_geom, file_geojson, style_mode, style_field,
                 opacity_default, visible_default, aktif, min_zoom, urutan,
-                outline_color, outline_weight, outline_opacity, fill_opacity, fill_enabled
+                outline_color, outline_weight, outline_opacity, fill_opacity, fill_enabled,
+                popup_config
          FROM layers WHERE group_id = ? ORDER BY urutan, id'
     );
     $stmtClasses = $pdo->prepare(
@@ -46,6 +47,8 @@ try {
             $l['outline_opacity'] = (float) $l['outline_opacity'];
             $l['fill_opacity'] = (float) $l['fill_opacity'];
             $l['fill_enabled'] = (int) $l['fill_enabled'];
+            $pc = is_string($l['popup_config'] ?? null) ? json_decode($l['popup_config'], true) : null;
+            $l['popup_config'] = (is_array($pc) && is_array($pc['fields'] ?? null)) ? $pc : null;
             $l['classes'] = $stmtClasses->fetchAll();
             $layers[] = $l;
         }
