@@ -79,7 +79,9 @@ function nominatim_get(string $url, string $ua): ?string
         ]);
         $out = curl_exec($ch);
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        // Catatan: curl_close() sengaja tidak dipanggil (deprecated di PHP 8.5,
+        // no-op sejak PHP 8.0; handle dibersihkan otomatis). Memanggilnya justru
+        // mencetak warning yang merusak JSON dan membuat pencarian gagal.
         if ($out !== false && $code === 200) {
             return $out;
         }
