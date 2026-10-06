@@ -1,5 +1,8 @@
 <?php
 // Seeder awal (idempotent). Dipanggil oleh migrate.php.
+// PRINSIP: hanya MENAMBAH baris yang belum ada; baris yang sudah ada TIDAK
+// PERNAH ditimpa. Ini penting karena migrate.php dijalankan ulang di tiap
+// deploy — semua perubahan admin (opacity, warna, urutan, dsb.) harus lestari.
 // Warna/kelas legenda HANYA hidup di database, bukan hardcode di JS.
 declare(strict_types=1);
 
@@ -27,7 +30,7 @@ function seed_database(PDO $pdo): array
     ];
     $stmtUser = $pdo->prepare(
         'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE role = VALUES(role)'
+         ON DUPLICATE KEY UPDATE id = id'
     );
     foreach ($defaultUsers as $u) {
         if ($u['password'] === '') {
@@ -42,8 +45,7 @@ function seed_database(PDO $pdo): array
     $stmtMap = $pdo->prepare(
         'INSERT INTO maps (id, judul, center_lat, center_lng, zoom, basemap_default)
          VALUES (1, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE judul = VALUES(judul), center_lat = VALUES(center_lat),
-             center_lng = VALUES(center_lng), zoom = VALUES(zoom), basemap_default = VALUES(basemap_default)'
+         ON DUPLICATE KEY UPDATE id = id'
     );
     // Asumsi: fokus awal Banyumas Raya (Jawa Tengah), bisa diubah di admin (Fase 4) / viewer.
     $stmtMap->execute(['Peta Persetujuan Perhutanan Sosial', -7.4000000, 109.2000000, 9, 'osm']);
@@ -57,7 +59,7 @@ function seed_database(PDO $pdo): array
     ];
     $stmtGroup = $pdo->prepare(
         'INSERT INTO layer_groups (map_id, nama, urutan) VALUES (1, ?, ?)
-         ON DUPLICATE KEY UPDATE urutan = VALUES(urutan)'
+         ON DUPLICATE KEY UPDATE id = id'
     );
     $stmtGroupId = $pdo->prepare('SELECT id FROM layer_groups WHERE map_id = 1 AND nama = ? LIMIT 1');
     $groupIds = [];
@@ -113,10 +115,7 @@ function seed_database(PDO $pdo): array
         'INSERT INTO layers (group_id, nama, tipe_geom, file_geojson, style_mode, style_field,
              opacity_default, visible_default, urutan, aktif)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE tipe_geom = VALUES(tipe_geom), file_geojson = VALUES(file_geojson),
-             style_mode = VALUES(style_mode), style_field = VALUES(style_field),
-             opacity_default = VALUES(opacity_default), visible_default = VALUES(visible_default),
-             urutan = VALUES(urutan), aktif = VALUES(aktif)'
+         ON DUPLICATE KEY UPDATE id = id'
     );
     $stmtLayerId = $pdo->prepare('SELECT id FROM layers WHERE group_id = ? AND nama = ? LIMIT 1');
     $layerIds = [];
@@ -167,8 +166,7 @@ function seed_database(PDO $pdo): array
     $stmtClass = $pdo->prepare(
         'INSERT INTO layer_classes (layer_id, nilai, label, warna, outline_warna, urutan)
          VALUES (?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE label = VALUES(label), warna = VALUES(warna),
-             outline_warna = VALUES(outline_warna), urutan = VALUES(urutan)'
+         ON DUPLICATE KEY UPDATE id = id'
     );
     foreach ($classes as $c) {
         [$layerNama, $nilai, $label, $warna, $outline, $urutan] = $c;
