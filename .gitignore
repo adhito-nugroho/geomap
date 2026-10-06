@@ -1,0 +1,6 @@
+# Konfigurasi lokal - JANGAN di-commit
+config.php
+
+# Laragon / Windows
+Thumbs.db
+Desktop.ini

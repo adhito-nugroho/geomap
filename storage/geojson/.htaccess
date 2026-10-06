@@ -1,0 +1,7 @@
+# Matikan eksekusi script di folder data GeoJSON.
+# File di sini hanya dilayani sebagai application/geo+json oleh endpoint PHP.
+RemoveHandler .php .phtml .phar
+RemoveType .php .phtml .phar
+<FilesMatch "\.(php|phtml|phar|pl|cgi|sh)$">
+    Require all denied
+</FilesMatch>
