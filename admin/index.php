@@ -146,8 +146,17 @@ $user = current_user();
         </select></label>
       <label class="block">Opacity default (0–100)
         <input type="number" min="0" max="100" x-model="ed.opacity_default" class="mt-1 w-full border rounded px-2 py-1.5"></label>
-      <label class="block">Min zoom (0–19, 0 = selalu tampil)
+      <label class="block">Min zoom (0–19, 0 = selalu)
         <input type="number" min="0" max="19" x-model="ed.min_zoom" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label class="block">Outline color (kosong = ikut kelas)
+        <input x-model="ed.outline_color" placeholder="#475569" class="mt-1 w-full border rounded px-2 py-1.5 font-mono"></label>
+      <label class="block">Outline weight (0.3–4)
+        <input type="number" min="0.3" max="4" step="0.1" x-model="ed.outline_weight" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label class="block">Outline opacity (0–1)
+        <input type="number" min="0" max="1" step="0.05" x-model="ed.outline_opacity" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label class="block">Fill opacity (0–1)
+        <input type="number" min="0" max="1" step="0.05" x-model="ed.fill_opacity" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="ed.fill_enabled" class="w-4 h-4"> Fill (isi poligon)</label>
       <label class="block">Style
         <select x-model="ed.style_mode" class="mt-1 w-full border rounded px-2 py-1.5">
           <option value="single">single (1 warna)</option>
@@ -299,6 +308,8 @@ function adminApp() {
           crsNote: '', prjWarn: '' },
     ed: { open: false, id: null, group_id: null, nama: '', tipe_geom: 'polygon',
           opacity_default: 100, visible_default: true, aktif: true, min_zoom: 0,
+          outline_color: '', outline_weight: 1, outline_opacity: 1,
+          fill_opacity: 0.65, fill_enabled: true,
           style_mode: 'single', style_field: '', file_geojson: '',
           classes: [], props: [], upload: null, classWarn: '',
           popupCols: [], popupSel: [] },
@@ -355,6 +366,9 @@ function adminApp() {
             group_id: g.id, nama: l.nama, tipe_geom: l.tipe_geom,
             opacity_default: l.opacity_default, visible_default: l.visible_default === 1,
             aktif: (l.aktif ?? 1) === 1, min_zoom: (l.min_zoom ?? 0),
+            outline_color: l.outline_color || '',
+            outline_weight: l.outline_weight ?? 1, outline_opacity: l.outline_opacity ?? 1,
+            fill_opacity: l.fill_opacity ?? 0.65, fill_enabled: (l.fill_enabled ?? 1) === 1,
             style_mode: l.style_mode,
             style_field: l.style_field || '', file_geojson: l.file_geojson || '',
             classes: JSON.parse(JSON.stringify(l.classes || [])),
@@ -454,6 +468,7 @@ function adminApp() {
       if (id === null) {
         this.ed = { ...this.ed, open: true, id: null, group_id: presetGroup ?? (this.groups[0] ? this.groups[0].id : null),
           nama: '', tipe_geom: 'polygon', opacity_default: 100, visible_default: true, aktif: true, min_zoom: 0,
+          outline_color: '', outline_weight: 1, outline_opacity: 1, fill_opacity: 0.65, fill_enabled: true,
           style_mode: 'single', style_field: '', file_geojson: '', classes: [],
           popupCols: [], popupSel: [] };
       } else {
@@ -469,6 +484,9 @@ function adminApp() {
           tipe_geom: this.ed.tipe_geom, opacity_default: +this.ed.opacity_default,
           visible_default: this.ed.visible_default ? 1 : 0, aktif: this.ed.aktif ? 1 : 0,
           min_zoom: +this.ed.min_zoom || 0,
+          outline_color: this.ed.outline_color, outline_weight: +this.ed.outline_weight,
+          outline_opacity: +this.ed.outline_opacity, fill_opacity: +this.ed.fill_opacity,
+          fill_enabled: this.ed.fill_enabled ? 1 : 0,
           style_mode: this.ed.style_mode, style_field: this.ed.style_field,
         });
         this.ed.id = data.id;

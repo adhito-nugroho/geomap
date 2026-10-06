@@ -23,7 +23,8 @@ try {
     $stmtGroups->execute();
     $stmtLayers = $pdo->prepare(
         'SELECT id, nama, tipe_geom, file_geojson, style_mode, style_field,
-                opacity_default, visible_default, aktif, min_zoom, urutan
+                opacity_default, visible_default, aktif, min_zoom, urutan,
+                outline_color, outline_weight, outline_opacity, fill_opacity, fill_enabled
          FROM layers WHERE group_id = ? ORDER BY urutan, id'
     );
     $stmtClasses = $pdo->prepare(
@@ -40,6 +41,11 @@ try {
             $l['visible_default'] = (int) $l['visible_default'];
             $l['opacity_default'] = (int) $l['opacity_default'];
             $l['aktif'] = (int) $l['aktif'];
+            $l['min_zoom'] = (int) $l['min_zoom'];
+            $l['outline_weight'] = (float) $l['outline_weight'];
+            $l['outline_opacity'] = (float) $l['outline_opacity'];
+            $l['fill_opacity'] = (float) $l['fill_opacity'];
+            $l['fill_enabled'] = (int) $l['fill_enabled'];
             $l['classes'] = $stmtClasses->fetchAll();
             $layers[] = $l;
         }

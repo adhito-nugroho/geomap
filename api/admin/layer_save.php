@@ -17,6 +17,19 @@ try {
     $visible = v_int($in, 'visible_default', 0, 1);
     $aktif = v_int($in, 'aktif', 0, 1);
     $minZoom = v_int($in, 'min_zoom', 0, 19);
+    // Style garis & isi per layer (kosong = ikut warna outline kelas)
+    $olRaw = trim((string) ($in['outline_color'] ?? ''));
+    $olColor = null;
+    if ($olRaw !== '') {
+        if (!preg_match('/^#[0-9a-fA-F]{6}$/', $olRaw)) {
+            json_fail("Field 'outline_color' harus heksadesimal (contoh #475569) atau kosong.");
+        }
+        $olColor = strtolower($olRaw);
+    }
+    $olWeight = v_float($in, 'outline_weight', 0.3, 4);
+    $olOpacity = v_float($in, 'outline_opacity', 0, 1);
+    $fillOp = v_float($in, 'fill_opacity', 0, 1);
+    $fillOn = v_int($in, 'fill_enabled', 0, 1);
     $mode = strtolower(trim((string) ($in['style_mode'] ?? 'single')));
     if (!in_array($mode, ['single', 'categorized'], true)) {
         json_fail('style_mode harus single atau categorized.');
@@ -31,9 +44,12 @@ try {
         v_layer($pdo, $id); // pastikan milik map 1
         $stmt = $pdo->prepare(
             'UPDATE layers SET group_id = ?, nama = ?, tipe_geom = ?, style_mode = ?, style_field = ?,
-             opacity_default = ?, visible_default = ?, aktif = ?, min_zoom = ? WHERE id = ?'
+             opacity_default = ?, visible_default = ?, aktif = ?, min_zoom = ?,
+             outline_color = ?, outline_weight = ?, outline_opacity = ?, fill_opacity = ?, fill_enabled = ?
+             WHERE id = ?'
         );
-        $stmt->execute([$groupId, $nama, $tipe, $mode, $field, $opacity, $visible, $aktif, $minZoom, $id]);
+        $stmt->execute([$groupId, $nama, $tipe, $mode, $field, $opacity, $visible, $aktif, $minZoom,
+            $olColor, $olWeight, $olOpacity, $fillOp, $fillOn, $id]);
     } else {
         $stmt = $pdo->prepare('SELECT COALESCE(MAX(urutan), 0) + 1 FROM layers WHERE group_id = ?');
         $stmt->execute([$groupId]);
@@ -41,10 +57,12 @@ try {
         // File placeholder: admin wajib upload GeoJSON setelahnya (atau timpa via SQL lama)
         $stmt = $pdo->prepare(
             'INSERT INTO layers (group_id, nama, tipe_geom, file_geojson, style_mode, style_field,
-             opacity_default, visible_default, urutan, aktif, min_zoom)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             opacity_default, visible_default, urutan, aktif, min_zoom,
+             outline_color, outline_weight, outline_opacity, fill_opacity, fill_enabled)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
-        $stmt->execute([$groupId, $nama, $tipe, 'belum-ada.geojson', $mode, $field, $opacity, $visible, $urut, $aktif, $minZoom]);
+        $stmt->execute([$groupId, $nama, $tipe, 'belum-ada.geojson', $mode, $field, $opacity, $visible, $urut, $aktif, $minZoom,
+            $olColor, $olWeight, $olOpacity, $fillOp, $fillOn]);
         $id = (int) $pdo->lastInsertId();
     }
 

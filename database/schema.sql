@@ -48,6 +48,14 @@ CREATE TABLE IF NOT EXISTS layers (
     aktif TINYINT(1) NOT NULL DEFAULT 1,
     -- Tambahan migrasi 002: layer dimuat & digambar mulai zoom ini (0 = selalu)
     min_zoom TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    -- Tambahan migrasi 003: style garis & isi per layer.
+    -- Default = tampilan lama (outline ikut kelas, weight 1, opacity 1, fill 0.65, fill on).
+    -- outline_color NULL = pakai outline_warna kelas; fill_enabled 0 = tanpa isi.
+    outline_color CHAR(7) NULL DEFAULT NULL,
+    outline_weight DECIMAL(3,1) NOT NULL DEFAULT 1.0,
+    outline_opacity DECIMAL(3,2) NOT NULL DEFAULT 1.00,
+    fill_opacity DECIMAL(3,2) NOT NULL DEFAULT 0.65,
+    fill_enabled TINYINT(1) NOT NULL DEFAULT 1,
     CONSTRAINT fk_layers_group FOREIGN KEY (group_id)
         REFERENCES layer_groups (id) ON DELETE CASCADE ON UPDATE CASCADE,
     UNIQUE KEY uq_layers_group_nama (group_id, nama),

@@ -142,6 +142,7 @@
                          class="w-4 h-4 accent-emerald-700">
                   <span class="font-medium flex-1" x-text="l.nama"></span>
                   <span x-show="(l.min_zoom ?? 0) > 0" class="text-xs text-gray-500 tabular-nums" title="Layer tampil mulai zoom ini" x-text="'≥z' + l.min_zoom"></span>
+                  <span x-show="l.checked && curZoom < (l.min_zoom ?? 0)" class="text-xs text-amber-600" x-text="'· tampil mulai zoom ' + l.min_zoom"></span>
                   <span x-show="l.loading" class="text-xs text-emerald-700">Memuat…</span>
                 </label>
                 <!-- Error per layer (terlihat di panel, bukan hanya console) -->
@@ -200,6 +201,9 @@ function webgis() {
     infoOpen: false,
     error: '',
     fittedOnce: false, // fitBounds otomatis hanya sekali, saat peta masih di pusat default
+    curZoom: 0,       // zoom peta saat ini (reaktif untuk catatan min_zoom di panel)
+    paneOrder: {},    // id layer -> indeks urutan tree (untuk z-index pane)
+    paneTotal: 0,
     filterText: '',    // filter layers (client-side)
     hiddenFields: [],  // field teknis popup identify, dari database (lowercase)
     searchQuery: '',
@@ -289,15 +293,20 @@ function webgis() {
       });
       // min_zoom: saat zoom berubah, muat/gambar layer yang masuk rentang
       this.map.on('zoomend', () => {
+        this.curZoom = this.map.getZoom();
         for (const g of this.groups) {
           for (const l of g.layers) {
             if (l.checked) this.toggleLayer(l);
           }
         }
       });
+      this.curZoom = this.map.getZoom();
 
-      // Siapkan tree + centang default dari visible_default, lalu lazy-load yang aktif
+      // Siapkan tree + centang default dari visible_default, lalu lazy-load yang aktif.
+      // Sekaligus peta urutan tree -> z-index pane (atas panel = atas tumpukan).
       this.groups = cfg.groups || [];
+      this.paneOrder = {};
+      this.paneTotal = 0;
       for (const g of this.groups) {
         for (const l of g.layers) {
           l.checked = l.visible_default === 1;
@@ -305,6 +314,7 @@ function webgis() {
           l.loadError = '';
           l.opacity = (l.opacity_default ?? 100);
           l.min_zoom = (l.min_zoom ?? 0);
+          this.paneOrder[l.id] = this.paneTotal++;
         }
       }
       for (const g of this.groups) {
@@ -314,29 +324,52 @@ function webgis() {
       }
     },
 
-    // Cari kelas warna untuk satu fitur berdasarkan style_field (data dari DB)
+    // Cari kelas warna untuk satu fitur berdasarkan style_field (data dari DB).
+    // Pencocokan case-insensitive + trim, supaya "PERHUTANAN SOSIAL" cocok "Perhutanan Sosial".
     styleFor(layer, feature) {
       const classes = layer.classes || [];
       let cls = null;
       if (layer.style_mode === 'categorized' && layer.style_field) {
-        const v = feature.properties ? String(feature.properties[layer.style_field] ?? '') : '';
-        cls = classes.find(c => String(c.nilai) === v) || null;
+        const raw = feature.properties ? String(feature.properties[layer.style_field] ?? '') : '';
+        const v = raw.trim().toLowerCase();
+        cls = (v === '') ? null
+          : (classes.find(c => String(c.nilai ?? '').trim().toLowerCase() === v) || null);
       } else {
-        cls = classes.find(c => c.nilai === '__single__') || classes[0] || null;
+        cls = classes.find(c => String(c.nilai ?? '').trim() === '__single__') || classes[0] || null;
       }
-      // Fallback netral bila atribut tidak cocok kelas mana pun
+      // Fallback netral bila atribut tidak cocok kelas mana pun (bukan warna legenda)
       const fill = cls ? cls.warna : '#9ca3af';
-      const edge = (cls && cls.outline_warna) ? cls.outline_warna : '#ffffff';
-      const f = ((layer.opacity ?? layer.opacity_default ?? 100)) / 100;
-      return { fillColor: fill, color: edge, weight: 1, fillOpacity: 0.65 * f, opacity: f };
+      // Outline layer (admin) diutamakan; kosong = ikut outline kelas
+      const edge = layer.outline_color || (cls && cls.outline_warna) || '#ffffff';
+      const num = (v, d) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : d;
+      };
+      const f = num(layer.opacity ?? layer.opacity_default ?? 100, 100) / 100;
+      const fillOn = (layer.fill_enabled ?? 1) == 1;
+      return {
+        fillColor: fill,
+        color: edge,
+        weight: num(layer.outline_weight ?? 1, 1),
+        fillOpacity: fillOn ? num(layer.fill_opacity ?? 0.65, 0.65) * f : 0,
+        opacity: num(layer.outline_opacity ?? 1, 1) * f,
+      };
     },
 
-    // Terapkan opacity slider ke layer yang sudah dimuat (fill + garis)
+    // Terapkan opacity slider ke layer yang sudah dimuat (dikalikan style layer)
     applyOpacity(layer) {
       const gl = this.leaflets[layer.id];
       if (!gl) return;
-      const f = ((layer.opacity ?? 100)) / 100;
-      gl.setStyle({ fillOpacity: 0.65 * f, opacity: f });
+      const num = (v, d) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : d;
+      };
+      const f = num(layer.opacity ?? 100, 100) / 100;
+      const fillOn = (layer.fill_enabled ?? 1) == 1;
+      gl.setStyle({
+        fillOpacity: fillOn ? num(layer.fill_opacity ?? 0.65, 0.65) * f : 0,
+        opacity: num(layer.outline_opacity ?? 1, 1) * f,
+      });
     },
 
     // Filter layers client-side berdasarkan nama
@@ -383,6 +416,7 @@ function webgis() {
           if (!res.ok) throw new Error('HTTP ' + res.status);
           const gj = await res.json();
           this.leaflets[layer.id] = L.geoJSON(gj, {
+            pane: this.paneFor(layer),
             style: (f) => this.styleFor(layer, f),
             // Identify: klik fitur = popup tabel atribut
             onEachFeature: (f, ly) => {
@@ -426,6 +460,16 @@ function webgis() {
       }
     },
 
+    // Pane Leaflet per layer: z-index dari urutan tree (atas panel = atas tumpukan).
+    // Deterministik terhadap urutan load maupun hasil drag & drop admin (perlu refresh).
+    paneFor(layer) {
+      const name = 'pane-layer-' + layer.id;
+      if (!this.map.getPane(name)) this.map.createPane(name);
+      const idx = this.paneOrder[layer.id] ?? 0;
+      this.map.getPane(name).style.zIndex = 400 + (this.paneTotal - idx);
+      return name;
+    },
+
     // Susun ulang z-order sesuai urutan tree (atas tree = atas peta).
     // Layer di bawah min_zoom disembunyikan walau dicentang.
     reorder() {
@@ -439,9 +483,9 @@ function webgis() {
           else if (this.map.hasLayer(gl)) this.map.removeLayer(gl);
         }
       }
-      ordered.forEach((gl, i) => {
+      // Urutan tumpukan diatur pane (z-index), bukan urutan addTo.
+      ordered.forEach((gl) => {
         if (!this.map.hasLayer(gl)) gl.addTo(this.map);
-        gl.bringToBack(); // yang terakhir di-bringToBack = paling bawah
       });
     },
 

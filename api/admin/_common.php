@@ -75,6 +75,20 @@ function v_int(array $in, string $key, int $min, int $max): int
     return $v;
 }
 
+/** Ambil desimal dalam rentang; gagal bila tidak valid. */
+function v_float(array $in, string $key, float $min, float $max): float
+{
+    $v = $in[$key] ?? null;
+    if (!is_numeric($v)) {
+        json_fail("Field '{$key}' harus angka.");
+    }
+    $v = (float) $v;
+    if ($v < $min || $v > $max) {
+        json_fail("Field '{$key}' harus antara {$min} dan {$max}.");
+    }
+    return $v;
+}
+
 /** Validasi warna heksadesimal #rrggbb. */
 function v_color(array $in, string $key): string
 {
