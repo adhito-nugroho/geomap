@@ -38,16 +38,9 @@ try {
             'accept-language' => 'id',
         ]);
 
-    $ctx = stream_context_create([
-        'http' => [
-            'method'  => 'GET',
-            'header'  => 'User-Agent: ' . ($cfg['nominatim_user_agent'] ?? 'WebGIS-Perhutanan-Sosial/1.0') . "\r\n"
-                       . "Accept: application/json\r\n",
-            'timeout' => 8,
-        ],
-    ]);
-    $upstream = @file_get_contents($url, false, $ctx);
-    if ($upstream === false) {
+    $ua = (string) ($cfg['nominatim_user_agent'] ?? 'WebGIS-Perhutanan-Sosial/1.0');
+    $upstream = nominatim_get($url, $ua);
+    if ($upstream === null) {
         http_response_code(502);
         echo json_encode(['error' => 'Layanan pencarian tidak dapat dihubungi.']);
         exit;
@@ -64,4 +57,46 @@ try {
 } catch (Throwable $e) {
     http_response_code(500);
     echo json_encode(['error' => 'Gagal melakukan pencarian.']);
+}
+
+/**
+ * Ambil URL Nominatim dengan batas waktu tegas.
+ * cURL diutamakan karena memisahkan timeout koneksi (4 dtk) dan total (8 dtk);
+ * file_get_contents hanya membatasi fase baca di sebagian build PHP sehingga
+ * request bisa menggantung lama bila koneksi keluar server bermasalah.
+ * Kembalikan null bila gagal.
+ */
+function nominatim_get(string $url, string $ua): ?string
+{
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPGET => true,
+            CURLOPT_HTTPHEADER => ['User-Agent: ' . $ua, 'Accept: application/json'],
+            CURLOPT_CONNECTTIMEOUT => 4,
+            CURLOPT_TIMEOUT => 8,
+        ]);
+        $out = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($out !== false && $code === 200) {
+            return $out;
+        }
+    }
+    $prev = ini_get('default_socket_timeout');
+    ini_set('default_socket_timeout', '10');
+    try {
+        $ctx = stream_context_create([
+            'http' => [
+                'method'  => 'GET',
+                'header'  => "User-Agent: {$ua}\r\nAccept: application/json\r\n",
+                'timeout' => 8,
+            ],
+        ]);
+        $out = @file_get_contents($url, false, $ctx);
+    } finally {
+        ini_set('default_socket_timeout', $prev);
+    }
+    return ($out === false) ? null : $out;
 }

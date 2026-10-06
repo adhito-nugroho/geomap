@@ -725,14 +725,21 @@ function webgis() {
       if (q.length < 3) { this.searchResults = []; this.searchNote = ''; return; }
       this.searchNote = 'Mencari…';
       this.searchTimer = setTimeout(async () => {
+        // Batas 15 detik agar UI tak menggantung bila server lambat
+        const ctl = new AbortController();
+        const kill = setTimeout(() => ctl.abort(), 15000);
         try {
-          const res = await fetch('api/search.php?q=' + encodeURIComponent(q));
+          const res = await fetch('api/search.php?q=' + encodeURIComponent(q), { signal: ctl.signal });
+          clearTimeout(kill);
           const data = await res.json();
           if (!res.ok) { this.searchNote = data.error || 'Pencarian gagal.'; this.searchResults = []; return; }
           this.searchResults = data;
           this.searchNote = data.length ? '' : 'Tidak ditemukan di Indonesia.';
         } catch (e) {
-          this.searchNote = 'Pencarian gagal.';
+          clearTimeout(kill);
+          this.searchNote = (e && e.name === 'AbortError')
+            ? 'Pencarian kehabisan waktu. Periksa koneksi lalu coba lagi.'
+            : 'Pencarian gagal.';
           this.searchResults = [];
         }
       }, 400);
