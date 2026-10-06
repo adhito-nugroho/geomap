@@ -18,10 +18,11 @@ function db(): PDO
         return $pdo;
     }
     $c = load_config();
+    // Fallback port 3306 bila kunci tidak ada (mis. config.php lama di server)
     $dsn = sprintf(
         'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-        $c['db_host'],
-        $c['db_port'],
+        $c['db_host'] ?? '127.0.0.1',
+        $c['db_port'] ?? '3306',
         $c['db_name']
     );
     $pdo = new PDO($dsn, $c['db_user'], $c['db_pass'], [

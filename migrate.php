@@ -22,6 +22,9 @@ function out(string $msg, bool $isCli): void
 
 try {
     $cfg = require __DIR__ . '/config.php';
+    // Fallback bila kunci tidak ada (mis. config.php lama di server)
+    $cfg['db_host'] = $cfg['db_host'] ?? '127.0.0.1';
+    $cfg['db_port'] = $cfg['db_port'] ?? '3306';
 
     // 1. Sambung TANPA dbname dulu untuk CREATE DATABASE
     $pdoRoot = new PDO(

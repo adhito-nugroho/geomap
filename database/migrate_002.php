@@ -22,6 +22,9 @@ function out2(string $msg, bool $isCli): void
 
 try {
     $cfg = require dirname(__DIR__) . '/config.php';
+    // Fallback bila kunci tidak ada (mis. config.php lama di server)
+    $cfg['db_host'] = $cfg['db_host'] ?? '127.0.0.1';
+    $cfg['db_port'] = $cfg['db_port'] ?? '3306';
     $pdo = new PDO(
         sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $cfg['db_host'], $cfg['db_port'], $cfg['db_name']),
         $cfg['db_user'],
