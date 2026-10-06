@@ -1,23 +1,29 @@
 @echo off
 setlocal EnableExtensions
 rem ============================================================
-rem  deploy-db.bat : jalankan migrasi database project
+rem  deploy-db.bat : migrasi database project (idempotent, aman diulang)
 rem  Cara pakai:
-rem    deploy-db.bat                         ^(pakai folder file ini^)
-rem    deploy-db.bat "C:\laragon\www\website-cdk\geomap"   ^(folder di server^)
-rem  Menjalankan berurutan: migrate.php lalu database\migrate_002.php
-rem  (keduanya idempotent, aman diulang).
-rem  Syarat di folder target: config.php sudah diisi (salin dari
-rem  config.example.php), PHP + MySQL Laragon jalan.
+rem    deploy-db.bat                         (folder file ini, full: awal)
+rem    deploy-db.bat "C:\laragon\www\website-cdk\geomap"
+rem    deploy-db.bat --migrations-only       (hanya migrate_002 dst, tanpa seed)
+rem    deploy-db.bat "C:\...\geomap" --migrations-only
+rem  Full = migrate.php lalu database\migrate_*.php berurutan.
+rem  Syarat: config.php sudah diisi, PHP + MySQL jalan.
 rem ============================================================
 
-if "%~1"=="" (
-  set "ROOT=%~dp0"
-) else (
-  set "ROOT=%~1"
-)
+set "ROOT=%~dp0"
+set "MODE=full"
+:ARGS
+if "%~1"=="" goto :ARGS_DONE
+if /i "%~1"=="--migrations-only" set "MODE=migonly"
+if /i not "%~1"=="--migrations-only" set "ROOT=%~1"
+shift
+goto :ARGS
+:ARGS_DONE
+
 cd /d "%ROOT%" || (echo [GAGAL] Tidak bisa masuk folder %ROOT% & exit /b 1)
 echo [INFO] Folder project: %CD%
+echo [INFO] Mode: %MODE%
 
 rem --- Cari php.exe: PATH dulu, lalu folder PHP bawaan Laragon ---
 set "PHPBIN=php"
@@ -44,16 +50,17 @@ if not exist "config.php" (
   exit /b 1
 )
 
-echo [INFO] 1/2 migrate.php ...
+if "%MODE%"=="migonly" goto :MIGONLY
+echo [INFO] migrate.php (full: skema + seed) ...
 "%PHPBIN%" migrate.php
 if errorlevel 1 (echo [GAGAL] migrate.php gagal. & exit /b 1)
 
-if exist "database\migrate_002.php" (
-  echo [INFO] 2/2 database\migrate_002.php ...
-  "%PHPBIN%" database\migrate_002.php
-  if errorlevel 1 (echo [GAGAL] migrate_002.php gagal. & exit /b 1)
-) else (
-  echo [INFO] 2/2 migrate_002.php tidak ada, lewati.
+:MIGONLY
+echo [INFO] Migrasi skema database\migrate_*.php berurutan ...
+for %%f in (database\migrate_*.php) do (
+  echo [INFO] - %%~nxf ...
+  "%PHPBIN%" "%%~f"
+  if errorlevel 1 (echo [GAGAL] %%~nxf gagal. & exit /b 1)
 )
 
 echo [OK] Migrasi database selesai.

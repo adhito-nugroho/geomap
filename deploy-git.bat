@@ -74,5 +74,21 @@ echo [INFO] Branch remote belum ada, lewati pull (push awal).
 echo [INFO] Push ke origin/%BRANCH%...
 git push -u origin "%BRANCH%" || exit /b 1
 
-echo [OK] Deploy git selesai.
+rem --- Update server lokal bila ada: pull + migrasi skema SAJA tanpa seed ---
+rem Atur folder server di bawah, atau via env GEOMAP_SERVER_DIR sebelum menjalankan.
+if not defined GEOMAP_SERVER_DIR set "GEOMAP_SERVER_DIR=C:\laragon\www\website-cdk\geomap"
+if not exist "%GEOMAP_SERVER_DIR%\.git" goto :NOSERVER
+echo [INFO] Update server: %GEOMAP_SERVER_DIR%
+git -C "%GEOMAP_SERVER_DIR%" pull --rebase origin "%BRANCH%" || exit /b 1
+call "%ROOT%deploy-db.bat" "%GEOMAP_SERVER_DIR%" --migrations-only || exit /b 1
+echo [OK] Deploy selesai: kode ter-push, server ter-pull + termigrasi.
+goto :ENDOK
+
+:NOSERVER
+echo [INFO] Folder server tidak ditemukan di mesin ini, lewati update server.
+echo        Petunjuk: jalankan deploy-git.bat ini JUGA di server - di sana ia
+echo        akan pull + migrasi otomatis (push tidak ada yang baru).
+echo [OK] Deploy git selesai (push saja).
+
+:ENDOK
 endlocal
