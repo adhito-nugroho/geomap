@@ -4,7 +4,7 @@ rem ============================================================
 rem  deploy-git.bat : commit + push project ke GitHub
 rem  Repo   : https://github.com/adhito-nugroho/geomap.git
 rem  Cara pakai (dari folder project):
-rem    deploy-git.bat                 ^(pesan commit otomatis: Deploy tgl_jam^)
+rem    deploy-git.bat                 (pesan commit otomatis: Deploy tgl_jam)
 rem    deploy-git.bat "Pesan custom"
 rem  Catatan: config.php TIDAK ikut ter-push (ada di .gitignore).
 rem ============================================================
@@ -46,28 +46,31 @@ git status --short
 echo ----------------------------
 
 git diff --cached --quiet
-if not errorlevel 1 (
-  echo [INFO] Tidak ada perubahan untuk di-commit.
-  goto :PULLPUSH
-)
+if errorlevel 1 goto :DOCOMMIT
+echo [INFO] Tidak ada perubahan untuk di-commit.
+goto :PULLPUSH
 
-if "%~1"=="" (
-  for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HH-mm"') do set "MSG=Deploy %%t"
-) else (
-  set "MSG=%~1"
-)
+:DOCOMMIT
+if "%~1"=="" goto :AUTOMSG
+set "MSG=%~1"
+goto :DOMMIT
+:AUTOMSG
+for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HH-mm"') do set "MSG=Deploy %%t"
+:DOMMIT
 git commit -m "%MSG%" || exit /b 1
 
 :PULLPUSH
 rem Tarik dulu HANYA bila branch sudah ada di remote (push pertama tidak perlu pull)
 git ls-remote --heads origin "%BRANCH%" | findstr /c:"refs/heads/" >nul
-if not errorlevel 1 (
-  echo [INFO] Pull --rebase dari origin/%BRANCH%...
-  git pull --rebase origin "%BRANCH%" || exit /b 1
-) else (
-  echo [INFO] Branch remote belum ada, lewati pull (push awal).
-)
+if errorlevel 1 goto :FIRSTPUSH
+echo [INFO] Pull --rebase dari origin/%BRANCH%...
+git pull --rebase origin "%BRANCH%" || exit /b 1
+goto :DOPUSH
 
+:FIRSTPUSH
+echo [INFO] Branch remote belum ada, lewati pull (push awal).
+
+:DOPUSH
 echo [INFO] Push ke origin/%BRANCH%...
 git push -u origin "%BRANCH%" || exit /b 1
 
