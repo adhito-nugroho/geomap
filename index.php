@@ -654,6 +654,7 @@ function webgis() {
           const gj = await res.json();
           _leaflets[layer.id] = L.geoJSON(gj, {
             pane: this.paneFor(layer),
+            smoothFactor: 2,
             style: (f) => this.styleFor(layer, f),
             // Identify: konten popup dibangun malas (lazy) saat dibuka,
             // agar ribuan string HTML tak dirakit + disimpan di memori saat load
