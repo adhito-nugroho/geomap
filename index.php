@@ -282,12 +282,17 @@
 <script>
 // State Alpine + logika Leaflet. Tidak ada warna hardcode: semua dari API.
 function webgis() {
+  // Objek Leaflet di luar state reaktif Alpine (closure, bukan properti x-data)
+  // agar drag/zoom/render ribuan fitur tidak lewat Proxy Alpine (berat di HP).
+  let _map = null;
+  const _leaflets = {};
+  let _locateLayer = null;
+  let _measureLayer = null;
+  let _scaleSelect = null;
   return {
-    map: null,
     homeView: null,
     mapTitle: 'Memuat…',
     groups: [],       // tree dari /api/map.php, tiap layer dapat flag checked/loading
-    leaflets: {},     // cache id layer -> L.GeoJSON (lazy load, fetch sekali saja)
     panelOpen: window.innerWidth >= 768,
     infoOpen: false,
     error: '',
@@ -301,8 +306,6 @@ function webgis() {
     searchResults: [],
     searchNote: '',
     searchTimer: null,
-    locateLayer: null,
-    scaleSelect: null,
     scaleText: '',
     currentBase: 'osm',
     // Loading overlay: tampil selama konfigurasi + layer awal dimuat
@@ -315,7 +318,7 @@ function webgis() {
     exportOpen: false,
     exportId: null,
     // Ukur manual (tanpa library tambahan): polyline jarak + polygon luas geodesik
-    measure: { active: false, mode: null, points: [], layer: null },
+    measure: { active: false, mode: null, points: [] },
 
     async init() {
       // Guard ganda: cegah inisialisasi dua kali (pernah terjadi via x-init + auto-init).
@@ -363,24 +366,24 @@ function webgis() {
       const basemaps = { 'OpenStreetMap': osm, 'Esri Satelit': esri, 'OSM Humanitarian': hot };
 
       // Guard instance peta: jika sudah ada, hentikan (anti "Map container is already initialized")
-      if (this.map) return;
-      this.map = L.map('map', {
+      if (_map) return;
+      _map = L.map('map', {
         center: [this.homeView.lat, this.homeView.lng],
         zoom: this.homeView.zoom,
         zoomControl: false, // diganti kontrol zoom kustom kanan bawah (Fase 3)
         preferCanvas: true, // performa untuk poligon besar
         layers: [(this.currentBase === 'esri' ? esri : (this.currentBase === 'hot' ? hot : osm))],
       });
-      L.control.layers(basemaps).addTo(this.map);
-      L.control.zoom({ position: 'bottomright' }).addTo(this.map);
+      L.control.layers(basemaps).addTo(_map);
+      L.control.zoom({ position: 'bottomright' }).addTo(_map);
       // Lacak basemap aktif untuk state bagikan (nama -> kunci)
       const baseNameKeys = { 'OpenStreetMap': 'osm', 'Esri Satelit': 'esri', 'OSM Humanitarian': 'hot' };
-      this.map.on('baselayerchange', (e) => {
+      _map.on('baselayerchange', (e) => {
         this.currentBase = baseNameKeys[e.name] || 'osm';
         this.saveHash();
       });
       // Simpan state ke hash setiap peta digeser
-      this.map.on('moveend', () => this.saveHash());
+      _map.on('moveend', () => this.saveHash());
 
       // Tombol locate me / zoom extent / fullscreen (kanan bawah, vanilla Leaflet)
       const self = this;
@@ -406,30 +409,30 @@ function webgis() {
           return d;
         }
       });
-      this.map.addControl(new ToolBtns({ position: 'bottomright' }));
+      _map.addControl(new ToolBtns({ position: 'bottomright' }));
 
       // Scale bar metrik + dropdown skala + minimap (kiri bawah)
-      L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(this.map);
+      L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(_map);
       this.initScaleControl();
       if (L.Control && L.Control.MiniMap) {
         const osm2 = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {});
-        this.map.addControl(new L.Control.MiniMap(osm2, {
+        _map.addControl(new L.Control.MiniMap(osm2, {
           position: 'bottomleft', width: 140, height: 140, toggleDisplay: true,
         }));
       }
       document.addEventListener('fullscreenchange', () => {
-        if (this.map) setTimeout(() => this.map.invalidateSize(), 200);
+        if (_map) setTimeout(() => _map.invalidateSize(), 200);
       });
       // min_zoom: saat zoom berubah, muat/gambar layer yang masuk rentang
-      this.map.on('zoomend', () => {
-        this.curZoom = this.map.getZoom();
+      _map.on('zoomend', () => {
+        this.curZoom = _map.getZoom();
         for (const g of this.groups) {
           for (const l of g.layers) {
             if (l.checked) this.toggleLayer(l);
           }
         }
       });
-      this.curZoom = this.map.getZoom();
+      this.curZoom = _map.getZoom();
 
       // Siapkan tree + centang default dari visible_default, lalu lazy-load yang aktif.
       // Sekaligus peta urutan tree -> z-index pane (atas panel = atas tumpukan).
@@ -441,6 +444,7 @@ function webgis() {
           l.checked = l.visible_default === 1;
           l.loading = false;
           l.loadError = '';
+          l.loaded = false; // flag reaktif: GeoJSON sudah di-fetch (untuk template)
           l.opacity = (l.opacity_default ?? 100);
           l.min_zoom = (l.min_zoom ?? 0);
           this.paneOrder[l.id] = this.paneTotal++;
@@ -535,7 +539,7 @@ function webgis() {
       });
     },
     applyOpacityNow(layer) {
-      const gl = this.leaflets[layer.id];
+      const gl = _leaflets[layer.id];
       if (!gl) return;
       const num = (v, d) => {
         const n = parseFloat(v);
@@ -628,21 +632,21 @@ function webgis() {
 
     // Layer aktif = dicentang DAN zoom peta sudah mencapai min_zoom (dari DB)
     layerActive(layer) {
-      return layer.checked && this.map && this.map.getZoom() >= (layer.min_zoom ?? 0);
+      return layer.checked && _map && _map.getZoom() >= (layer.min_zoom ?? 0);
     },
 
     // Toggle visibilitas; fetch GeoJSON hanya saat pertama kali dibutuhkan (lazy).
     // Di bawah min_zoom: tidak di-fetch maupun digambar.
     async toggleLayer(layer) {
       if (layer.loading) return; // cegah fetch ganda saat zoom cepat
-      if (this.layerActive(layer) && !this.leaflets[layer.id]) {
+      if (this.layerActive(layer) && !_leaflets[layer.id]) {
         layer.loading = true;
         layer.loadError = '';
         try {
           const res = await fetch('api/geojson.php?layer=' + layer.id);
           if (!res.ok) throw new Error('HTTP ' + res.status);
           const gj = await res.json();
-          this.leaflets[layer.id] = L.geoJSON(gj, {
+          _leaflets[layer.id] = L.geoJSON(gj, {
             pane: this.paneFor(layer),
             style: (f) => this.styleFor(layer, f),
             // Identify: konten popup dibangun malas (lazy) saat dibuka,
@@ -651,6 +655,7 @@ function webgis() {
               ly.bindPopup(() => this.popupHtml(f.properties, layer), { maxWidth: Math.min(300, window.innerWidth - 48) });
             },
           });
+          layer.loaded = true; // flag reaktif untuk template (exportLayers)
         } catch (e) {
           layer.checked = false;
           layer.loadError = 'Gagal memuat layer. Centang ulang untuk mencoba lagi.';
@@ -679,24 +684,24 @@ function webgis() {
     // default (dari tabel maps), zoom ke gabungan bounds layer yang aktif.
     // Tidak ada koordinat hardcode; pusat default dibaca dari homeView (DB).
     maybeFit() {
-      if (this.fittedOnce || !this.map || !this.homeView) return;
+      if (this.fittedOnce || !_map || !this.homeView) return;
       if (this._batchLoading) return; // tunggu batch awal selesai agar bounds lengkap
-      const c = this.map.getCenter();
+      const c = _map.getCenter();
       const atHome = Math.abs(c.lat - this.homeView.lat) < 1e-6
         && Math.abs(c.lng - this.homeView.lng) < 1e-6
-        && this.map.getZoom() === this.homeView.zoom;
+        && _map.getZoom() === this.homeView.zoom;
       if (!atHome) { this.fittedOnce = true; return; } // pengguna sudah menggeser: jangan ganggu
       const bounds = L.latLngBounds([]);
       let any = false;
       for (const g of this.groups) {
         for (const l of g.layers) {
-          const gl = this.leaflets[l.id];
+          const gl = _leaflets[l.id];
           if (gl && l.checked) { bounds.extend(gl.getBounds()); any = true; }
         }
       }
       if (any && bounds.isValid()) {
         this.fittedOnce = true;
-        this.map.fitBounds(bounds, { padding: [24, 24] });
+        _map.fitBounds(bounds, { padding: [24, 24] });
       }
     },
 
@@ -704,28 +709,28 @@ function webgis() {
     // Deterministik terhadap urutan load maupun hasil drag & drop admin (perlu refresh).
     paneFor(layer) {
       const name = 'pane-layer-' + layer.id;
-      if (!this.map.getPane(name)) this.map.createPane(name);
+      if (!_map.getPane(name)) _map.createPane(name);
       const idx = this.paneOrder[layer.id] ?? 0;
-      this.map.getPane(name).style.zIndex = 400 + (this.paneTotal - idx);
+      _map.getPane(name).style.zIndex = 400 + (this.paneTotal - idx);
       return name;
     },
 
     // Susun ulang z-order sesuai urutan tree (atas tree = atas peta).
     // Layer di bawah min_zoom disembunyikan walau dicentang.
     reorder() {
-      if (!this.map) return;
+      if (!_map) return;
       const ordered = [];
       for (const g of this.groups) {
         for (const l of g.layers) {
-          const gl = this.leaflets[l.id];
+          const gl = _leaflets[l.id];
           if (!gl) continue;
           if (this.layerActive(l)) ordered.push(gl);
-          else if (this.map.hasLayer(gl)) this.map.removeLayer(gl);
+          else if (_map.hasLayer(gl)) _map.removeLayer(gl);
         }
       }
       // Urutan tumpukan diatur pane (z-index), bukan urutan addTo.
       ordered.forEach((gl) => {
-        if (!this.map.hasLayer(gl)) gl.addTo(this.map);
+        if (!_map.hasLayer(gl)) gl.addTo(_map);
       });
     },
 
@@ -782,13 +787,13 @@ function webgis() {
     goResult(r) {
       this.searchResults = [];
       this.searchNote = '';
-      if (!this.map) return;
+      if (!_map) return;
       if (r.boundingbox) {
         // Nominatim: boundingbox = [selatan, utara, barat, timur]
         const s = +r.boundingbox[0], n = +r.boundingbox[1], w = +r.boundingbox[2], e = +r.boundingbox[3];
-        this.map.fitBounds([[s, w], [n, e]], { padding: [24, 24] });
+        _map.fitBounds([[s, w], [n, e]], { padding: [24, 24] });
       } else {
-        this.map.setView([+r.lat, +r.lon], 14);
+        _map.setView([+r.lat, +r.lon], 14);
       }
     },
     clearSearch() {
@@ -800,48 +805,48 @@ function webgis() {
     // ---- Kontrol kanan bawah ----
     locateMe() {
       if (!navigator.geolocation) { this.error = 'Geolokasi tidak didukung browser ini.'; return; }
-      if (this.locateLayer) { this.map.removeLayer(this.locateLayer); this.locateLayer = null; }
-      this.map.locate({ setView: true, maxZoom: 14 });
-      this.map.once('locationfound', (e) => {
-        this.locateLayer = L.circleMarker(e.latlng, {
+      if (_locateLayer) { _map.removeLayer(_locateLayer); _locateLayer = null; }
+      _map.locate({ setView: true, maxZoom: 14 });
+      _map.once('locationfound', (e) => {
+        _locateLayer = L.circleMarker(e.latlng, {
           radius: 8, color: '#16a34a', fillColor: '#4ade80', fillOpacity: 0.9,
-        }).addTo(this.map).bindPopup('Lokasi Anda').openPopup();
+        }).addTo(_map).bindPopup('Lokasi Anda').openPopup();
       });
-      this.map.once('locationerror', () => {
+      _map.once('locationerror', () => {
         this.error = 'Tidak dapat memperoleh lokasi Anda.';
       });
     },
     zoomExtent() {
-      if (!this.map) return;
+      if (!_map) return;
       const bounds = L.latLngBounds([]);
       let any = false;
       for (const g of this.groups) {
         for (const l of g.layers) {
-          const gl = this.leaflets[l.id];
+          const gl = _leaflets[l.id];
           if (gl && l.checked) { bounds.extend(gl.getBounds()); any = true; }
         }
       }
-      if (any && bounds.isValid()) this.map.fitBounds(bounds, { padding: [24, 24] });
+      if (any && bounds.isValid()) _map.fitBounds(bounds, { padding: [24, 24] });
       else this.goHome();
     },
     toggleFullscreen() {
       const el = document.getElementById('map-wrap');
       if (!document.fullscreenElement) { if (el.requestFullscreen) el.requestFullscreen(); }
       else if (document.exitFullscreen) document.exitFullscreen();
-      setTimeout(() => { if (this.map) this.map.invalidateSize(); }, 300);
+      setTimeout(() => { if (_map) _map.invalidateSize(); }, 300);
     },
 
     // ---- Dropdown skala (96 dpi): N = meterPerPixel / 0.0002645833 ----
     zoomForScale(n) {
-      const lat = this.map.getCenter().lat * Math.PI / 180;
+      const lat = _map.getCenter().lat * Math.PI / 180;
       const z = Math.log2(156543.03392 * Math.cos(lat) / (n * 0.0002645833));
       return Math.max(0, Math.min(19, Math.round(z)));
     },
     updateScaleLabel() {
-      const sel = this.scaleSelect;
-      if (!sel || !this.map) return;
-      const lat = this.map.getCenter().lat * Math.PI / 180;
-      const n = Math.round(156543.03392 * Math.cos(lat) / Math.pow(2, this.map.getZoom()) / 0.0002645833);
+      const sel = _scaleSelect;
+      if (!sel || !_map) return;
+      const lat = _map.getCenter().lat * Math.PI / 180;
+      const n = Math.round(156543.03392 * Math.cos(lat) / Math.pow(2, _map.getZoom()) / 0.0002645833);
       this.scaleText = '1:' + n.toLocaleString('id-ID');
       sel.innerHTML = '';
       const cur = document.createElement('option');
@@ -863,16 +868,16 @@ function webgis() {
       sel.title = 'Skala peta';
       sel.style.fontSize = '12px';
       sel.style.maxWidth = '130px';
-      this.scaleSelect = sel;
+      _scaleSelect = sel;
       sel.addEventListener('change', () => {
         const n = parseFloat(sel.value);
-        if (n > 0 && this.map) this.map.setZoom(this.zoomForScale(n));
+        if (n > 0 && _map) _map.setZoom(this.zoomForScale(n));
       });
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);
       const C = L.Control.extend({ onAdd: () => div });
-      this.map.addControl(new C({ position: 'bottomleft' }));
-      this.map.on('moveend zoomend', () => this.updateScaleLabel());
+      _map.addControl(new C({ position: 'bottomleft' }));
+      _map.on('moveend zoomend', () => this.updateScaleLabel());
       this.updateScaleLabel();
     },
 
@@ -897,9 +902,9 @@ function webgis() {
       return h;
     },
     saveHash() {
-      if (!this.map) return;
-      const c = this.map.getCenter();
-      const parts = ['c=' + c.lat.toFixed(5) + ',' + c.lng.toFixed(5) + ',' + this.map.getZoom(),
+      if (!_map) return;
+      const c = _map.getCenter();
+      const parts = ['c=' + c.lat.toFixed(5) + ',' + c.lng.toFixed(5) + ',' + _map.getZoom(),
         'b=' + this.currentBase];
       const ll = [];
       for (const g of this.groups) {
@@ -985,16 +990,16 @@ function webgis() {
       this.measure.active = true;
       this.measure.mode = mode;
       this.measure.result = '';
-      if (!this.measure.layer) {
-        this.measure.layer = L.layerGroup([], { pane: 'markerPane' }).addTo(this.map);
+      if (!_measureLayer) {
+        _measureLayer = L.layerGroup([], { pane: 'markerPane' }).addTo(_map);
       }
-      this.map.getContainer().style.cursor = 'crosshair';
-      this.map.doubleClickZoom.disable();
+      _map.getContainer().style.cursor = 'crosshair';
+      _map.doubleClickZoom.disable();
       this._mClick = (e) => this.measureAdd(e.latlng);
       this._mDbl = () => this.measureFinish();
       this._mEsc = (e) => { if (e.key === 'Escape') this.measureClear(); };
-      this.map.on('click', this._mClick);
-      this.map.on('dblclick', this._mDbl);
+      _map.on('click', this._mClick);
+      _map.on('dblclick', this._mDbl);
       document.addEventListener('keydown', this._mEsc);
     },
     measureAdd(ll) {
@@ -1003,16 +1008,16 @@ function webgis() {
     },
     measureDraw() {
       const pts = this.measure.points;
-      this.measure.layer.clearLayers();
+      _measureLayer.clearLayers();
       if (pts.length === 0) return;
       // interactive:false agar garis hasil ukur tidak menghalangi klik popup layer di bawahnya
       const opts = { color: '#e11d48', weight: 3, pane: 'markerPane', interactive: false };
       if (this.measure.mode === 'area' && pts.length >= 3) {
-        L.polygon(pts, { ...opts, fillOpacity: 0.15 }).addTo(this.measure.layer);
+        L.polygon(pts, { ...opts, fillOpacity: 0.15 }).addTo(_measureLayer);
       } else if (pts.length >= 2 || this.measure.mode === 'distance') {
-        L.polyline(pts, opts).addTo(this.measure.layer);
+        L.polyline(pts, opts).addTo(_measureLayer);
       }
-      L.circleMarker(pts[pts.length - 1], { radius: 4, color: '#e11d48', fillColor: '#fff', fillOpacity: 1, pane: 'markerPane', interactive: false }).addTo(this.measure.layer);
+      L.circleMarker(pts[pts.length - 1], { radius: 4, color: '#e11d48', fillColor: '#fff', fillOpacity: 1, pane: 'markerPane', interactive: false }).addTo(_measureLayer);
       this.measure.result = this.measureText();
     },
     measureText() {
@@ -1035,10 +1040,10 @@ function webgis() {
     },
     measureStop() {
       this.measure.active = false;
-      this.map.getContainer().style.cursor = '';
-      if (this.map.doubleClickZoom) this.map.doubleClickZoom.enable();
-      if (this._mClick) this.map.off('click', this._mClick);
-      if (this._mDbl) this.map.off('dblclick', this._mDbl);
+      _map.getContainer().style.cursor = '';
+      if (_map.doubleClickZoom) _map.doubleClickZoom.enable();
+      if (this._mClick) _map.off('click', this._mClick);
+      if (this._mDbl) _map.off('dblclick', this._mDbl);
       if (this._mEsc) document.removeEventListener('keydown', this._mEsc);
       this._mClick = this._mDbl = this._mEsc = null;
     },
@@ -1046,7 +1051,7 @@ function webgis() {
       this.measureStop();
       this.measure.points = [];
       this.measure.result = '';
-      if (this.measure.layer) this.measure.layer.clearLayers();
+      if (_measureLayer) _measureLayer.clearLayers();
     },
 
     // ---- Export GeoJSON layer aktif (versi tampilan dari server) ----
@@ -1054,7 +1059,7 @@ function webgis() {
       const out = [];
       for (const g of this.groups) {
         for (const l of g.layers) {
-          if (l.checked && this.leaflets[l.id]) out.push(l);
+          if (l.checked && l.loaded) out.push(l);
         }
       }
       if (this.exportId && !out.some((l) => l.id === this.exportId)) this.exportId = null;
@@ -1096,7 +1101,7 @@ function webgis() {
       let h = '';
       for (const g of this.groups) {
         for (const l of g.layers) {
-          if (!l.checked || !this.leaflets[l.id]) continue;
+          if (!l.checked || !l.loaded) continue;
           h += '<div style="margin:6px 0;"><b>' + this.esc(l.nama) + '</b>';
           for (const c of (l.classes || [])) {
             h += '<div><span class="legend-swatch" style="background:' + c.warna + ';display:inline-block;vertical-align:middle;"></span> '
@@ -1109,7 +1114,7 @@ function webgis() {
     },
 
     goHome() {
-      if (this.map && this.homeView) this.map.setView([this.homeView.lat, this.homeView.lng], this.homeView.zoom);
+      if (_map && this.homeView) _map.setView([this.homeView.lat, this.homeView.lng], this.homeView.zoom);
     },
     activeCount() {
       let n = 0;
