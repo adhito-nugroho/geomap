@@ -475,11 +475,21 @@ function webgis() {
       }
       this.loadDone = 0;
       this.loadingMsg = this.loadTotal > 0 ? ('Memuat layer 0/' + this.loadTotal + '…') : 'Menyiapkan peta…';
-      for (const g of this.groups) {
-        for (const l of g.layers) {
-          if (l.checked) await this.toggleLayer(l);
+      // Muat paralel (bukan sekuensial) agar latensi tak dijumlahkan.
+      // maybeFit ditahan selama batch agar fitBounds mencakup SEMUA layer awal.
+      this._batchLoading = true;
+      try {
+        const jobs = [];
+        for (const g of this.groups) {
+          for (const l of g.layers) {
+            if (l.checked) jobs.push(this.toggleLayer(l));
+          }
         }
+        await Promise.allSettled(jobs);
+      } finally {
+        this._batchLoading = false;
       }
+      this.maybeFit();
       this.bootLoading = false;
     },
 
@@ -635,10 +645,10 @@ function webgis() {
           this.leaflets[layer.id] = L.geoJSON(gj, {
             pane: this.paneFor(layer),
             style: (f) => this.styleFor(layer, f),
-            // Identify: klik fitur = popup tabel atribut
+            // Identify: konten popup dibangun malas (lazy) saat dibuka,
+            // agar ribuan string HTML tak dirakit + disimpan di memori saat load
             onEachFeature: (f, ly) => {
-              // maxWidth menyesuaikan layar HP agar popup tidak meluap
-              ly.bindPopup(this.popupHtml(f.properties, layer), { maxWidth: Math.min(300, window.innerWidth - 48) });
+              ly.bindPopup(() => this.popupHtml(f.properties, layer), { maxWidth: Math.min(300, window.innerWidth - 48) });
             },
           });
         } catch (e) {
@@ -670,6 +680,7 @@ function webgis() {
     // Tidak ada koordinat hardcode; pusat default dibaca dari homeView (DB).
     maybeFit() {
       if (this.fittedOnce || !this.map || !this.homeView) return;
+      if (this._batchLoading) return; // tunggu batch awal selesai agar bounds lengkap
       const c = this.map.getCenter();
       const atHome = Math.abs(c.lat - this.homeView.lat) < 1e-6
         && Math.abs(c.lng - this.homeView.lng) < 1e-6
