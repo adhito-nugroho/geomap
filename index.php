@@ -289,6 +289,7 @@ function webgis() {
   let _locateLayer = null;
   let _measureLayer = null;
   let _scaleSelect = null;
+  let _hashT = null; // timer debounce saveHash (di luar state reaktif)
   return {
     homeView: null,
     mapTitle: 'Memuat…',
@@ -423,14 +424,19 @@ function webgis() {
       document.addEventListener('fullscreenchange', () => {
         if (_map) setTimeout(() => _map.invalidateSize(), 200);
       });
-      // min_zoom: saat zoom berubah, muat/gambar layer yang masuk rentang
+      // min_zoom: saat zoom berubah, lazy-load yang masuk rentang + reorder sekali.
+      // Diabaikan selama boot agar tidak mengganggu hitungan loading awal.
       _map.on('zoomend', () => {
         this.curZoom = _map.getZoom();
+        if (this.bootLoading) return;
         for (const g of this.groups) {
           for (const l of g.layers) {
-            if (l.checked) this.toggleLayer(l);
+            if (l.checked && !_leaflets[l.id] && !l.loading && this.curZoom >= (l.min_zoom ?? 0)) {
+              this.toggleLayer(l);
+            }
           }
         }
+        this.reorder();
       });
       this.curZoom = _map.getZoom();
 
@@ -901,7 +907,13 @@ function webgis() {
       } catch (e) { /* abaikan hash rusak */ }
       return h;
     },
+    // saveHash di-debounce 300 ms (slider/zoom cepat tak membanjiri replaceState;
+    // Safari iOS bisa melempar SecurityError bila >100x/30 detik -> ditangkap).
     saveHash() {
+      clearTimeout(_hashT);
+      _hashT = setTimeout(() => this._writeHash(), 300);
+    },
+    _writeHash() {
       if (!_map) return;
       const c = _map.getCenter();
       const parts = ['c=' + c.lat.toFixed(5) + ',' + c.lng.toFixed(5) + ',' + _map.getZoom(),
@@ -913,10 +925,12 @@ function webgis() {
         }
       }
       if (ll.length) parts.push('l=' + ll.join(','));
-      history.replaceState(null, '', '#' + parts.join('&'));
+      try {
+        history.replaceState(null, '', '#' + parts.join('&'));
+      } catch (e) { /* abaikan, mis. SecurityError Safari */ }
     },
     shareLink() {
-      this.saveHash();
+      this._writeHash(); // tulis sinkron agar URL yang disalin sudah mutakhir
       const url = location.href;
       const done = () => this.toast('Tautan peta disalin.');
       if (navigator.clipboard && navigator.clipboard.writeText) {
