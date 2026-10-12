@@ -287,6 +287,9 @@ function webgis() {
   let _map = null;
   const _leaflets = {};
   let _locateLayer = null;
+  let _locateAccuracy = null; // lingkaran akurasi GPS (satu instance, dipakai ulang)
+  let _locating = false;      // guard klik ganda saat GPS lambat
+  let _locateTimer = null;    // safety timeout agar UI tak menggantung
   let _measureLayer = null;
   let _scaleSelect = null;
   let _hashT = null; // timer debounce saveHash (di luar state reaktif)
@@ -358,12 +361,14 @@ function webgis() {
       }
 
       // Basemap: OSM default; Esri satelit + OSM Humanitarian sebagai opsi
+      // updateWhenIdle + keepBuffer kecil: geser peta di HP terasa ringan
+      const tileOpts = { maxZoom: 19, updateWhenIdle: true, keepBuffer: 4, crossOrigin: true };
       const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-        { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' });
+        { ...tileOpts, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' });
       const esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        { maxZoom: 19, attribution: 'Imagery &copy; Esri & contributors' });
+        { ...tileOpts, attribution: 'Imagery &copy; Esri & contributors' });
       const hot = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-        { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors, Tiles style by HOT' });
+        { ...tileOpts, attribution: '&copy; OpenStreetMap contributors, Tiles style by HOT' });
       const basemaps = { 'OpenStreetMap': osm, 'Esri Satelit': esri, 'OSM Humanitarian': hot };
 
       // Guard instance peta: jika sudah ada, hentikan (anti "Map container is already initialized")
@@ -373,6 +378,10 @@ function webgis() {
         zoom: this.homeView.zoom,
         zoomControl: false, // diganti kontrol zoom kustom kanan bawah (Fase 3)
         preferCanvas: true, // performa untuk poligon besar
+        zoomSnap: 0.5,      // zoom lebih halus di HP (cubitan terasa responsif)
+        zoomDelta: 0.5,
+        wheelPxPerZoomLevel: 90,
+        inertiaMaxSpeed: 1200, // batasi inersia agar peta cepat berhenti setelah digeser
         layers: [(this.currentBase === 'esri' ? esri : (this.currentBase === 'hot' ? hot : osm))],
       });
       L.control.layers(basemaps).addTo(_map);
@@ -413,9 +422,11 @@ function webgis() {
       _map.addControl(new ToolBtns({ position: 'bottomright' }));
 
       // Scale bar metrik + dropdown skala + minimap (kiri bawah)
+      // Minimap hanya di desktop: di HP ia menambah request tile + menutup
+      // layar (lihat screenshot) sehingga peta terasa berat setelah digeser.
       L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(_map);
       this.initScaleControl();
-      if (L.Control && L.Control.MiniMap) {
+      if (window.innerWidth >= 768 && L.Control && L.Control.MiniMap) {
         const osm2 = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {});
         _map.addControl(new L.Control.MiniMap(osm2, {
           position: 'bottomleft', width: 140, height: 140, toggleDisplay: true,
@@ -810,18 +821,82 @@ function webgis() {
     },
 
     // ---- Kontrol kanan bawah ----
+    // Anti titik ganda + anti lambat:
+    // - guard _locating: klik spam saat GPS lambat diabaikan (sumber 2 titik:
+    //   dua handler locationfound dari dua klik, masing-masing bikin marker baru
+    //   sehingga marker pertama bocor di peta karena variabel tertimpa).
+    // - satu marker dipakai ulang via setLatLng (tidak pernah add dua kali).
+    // - handler didaftar SEBELUM locate + request lama dibatalkan via stopLocate.
+    // - maximumAge 10 dtk: pakai cache GPS dulu (cepat) lalu perbaiki akurasi.
+    // - TIDAK paksa maxZoom 14 (itu zoom-OUT dari posisi dekat sehingga terasa
+    //   lambat); zoom dipertahankan, minimal naik ke 16 via flyTo singkat.
     locateMe() {
-      if (!navigator.geolocation) { this.error = 'Geolokasi tidak didukung browser ini.'; return; }
-      if (_locateLayer) { _map.removeLayer(_locateLayer); _locateLayer = null; }
-      _map.locate({ setView: true, maxZoom: 14 });
-      _map.once('locationfound', (e) => {
-        _locateLayer = L.circleMarker(e.latlng, {
-          radius: 8, color: '#16a34a', fillColor: '#4ade80', fillOpacity: 0.9,
-        }).addTo(_map).bindPopup('Lokasi Anda').openPopup();
+      if (!_map) return;
+      if (!navigator.geolocation) { this.toast('Geolokasi tidak didukung browser ini.'); return; }
+      if (_locating) { this.toast('Masih mencari lokasi…'); return; }
+      _locating = true;
+      this.toast('Mencari lokasi Anda…');
+      // Bersihkan handler basi + batalkan request menggantung sebelumnya
+      _map.off('locationfound');
+      _map.off('locationerror');
+      try { _map.stopLocate(); } catch (e) { /* abaikan */ }
+      // Daftarkan handler DULU sebelum locate (hindari race event terlewat)
+      _map.on('locationfound', (e) => {
+        clearTimeout(_locateTimer);
+        _locating = false;
+        _map.off('locationfound');
+        _map.off('locationerror');
+        try { _map.stopLocate(); } catch (err) { /* abaikan */ }
+        const ll = e.latlng;
+        // Satu titik hijau dipakai ulang — tidak pernah ada titik kedua
+        if (_locateLayer) {
+          _locateLayer.setLatLng(ll);
+        } else {
+          _locateLayer = L.circleMarker(ll, {
+            radius: 9, weight: 3, color: '#ffffff',
+            fillColor: '#16a34a', fillOpacity: 1,
+          }).addTo(_map).bindPopup('Lokasi Anda');
+        }
+        // Lingkaran akurasi juga dipakai ulang (dibatasi 500 m agar tak menutup peta)
+        if (e.accuracy && Number.isFinite(e.accuracy)) {
+          const r = Math.min(e.accuracy, 500);
+          if (_locateAccuracy) {
+            _locateAccuracy.setLatLng(ll).setRadius(r);
+          } else {
+            _locateAccuracy = L.circle(ll, {
+              radius: r, weight: 1, color: '#16a34a',
+              fillColor: '#16a34a', fillOpacity: 0.15, interactive: false,
+            }).addTo(_map);
+          }
+        }
+        // Pertahankan zoom dekat pengguna; hanya zoom-in bila masih jauh
+        const targetZoom = Math.max(_map.getZoom(), 16);
+        _map.flyTo(ll, targetZoom, { duration: 0.6 });
+        _locateLayer.bindPopup('Lokasi Anda').openPopup();
+        this.toast('');
       });
-      _map.once('locationerror', () => {
-        this.error = 'Tidak dapat memperoleh lokasi Anda.';
+      _map.on('locationerror', (e) => {
+        clearTimeout(_locateTimer);
+        _locating = false;
+        _map.off('locationfound');
+        _map.off('locationerror');
+        const code = e && e.code;
+        // 1 = izin ditolak, 3 = timeout
+        this.toast(code === 1
+          ? 'Izin lokasi ditolak. Aktifkan izin lokasi di browser.'
+          : 'Tidak dapat memperoleh lokasi. Coba lagi di area terbuka.');
       });
+      // Safety timeout: jangan biarkan toast "Mencari…" menggantung selamanya
+      clearTimeout(_locateTimer);
+      _locateTimer = setTimeout(() => {
+        if (!_locating) return;
+        _locating = false;
+        try { _map.stopLocate(); } catch (err) { /* abaikan */ }
+        _map.off('locationfound');
+        _map.off('locationerror');
+        this.toast('Lokasi tak kunjung ditemukan. Coba lagi.');
+      }, 12000);
+      _map.locate({ setView: false, enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 });
     },
     zoomExtent() {
       if (!_map) return;

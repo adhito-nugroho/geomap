@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Banding Asli vs Simplifikasi (TRIAL lokal, bukan produksi)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  #bar { padding: 8px 12px; background: #f3f4f6; border-bottom: 1px solid #d1d5db;
+         display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; }
+  #bar select, #bar button { font-size: 14px; padding: 6px 10px; min-height: 40px; }
+  #status { font-size: 12px; color: #374151; }
+  #maps { flex: 1; display: flex; min-height: 0; }
+  .pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .pane .lbl { padding: 4px 8px; font-size: 13px; font-weight: bold; color: #fff; }
+  #lblL { background: #2563eb; }
+  #lblR { background: #dc2626; }
+  .map { flex: 1; min-height: 0; }
+  @media (max-width: 700px) {
+    #maps { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div id="bar">
+  <strong>Asli vs Simplifikasi</strong>
+  <select id="sel">
+    <option value="l32_p50">Batas Desa — p50</option>
+    <option value="l32_p30">Batas Desa — p30</option>
+    <option value="l32_p15">Batas Desa — p15</option>
+    <option value="l33_p50">RPKHDPK — p50</option>
+    <option value="l33_p30">RPKHDPK — p30</option>
+    <option value="l33_p15">RPKHDPK — p15</option>
+  </select>
+  <button id="btnSwap" type="button">Tukar sisi</button>
+  <span id="status">Memuat…</span>
+</div>
+<div id="maps">
+  <div class="pane"><div class="lbl" id="lblL">kiri</div><div id="mapL" class="map"></div></div>
+  <div class="pane"><div class="lbl" id="lblR">kanan</div><div id="mapR" class="map"></div></div>
+</div>
+<script>
+// Halaman TRIAL lokal. Kiri/kanan: garis saja (tanpa fill), weight 1.
+const ASLI = {
+  l32: 'asli/37c8061bbe73875e.geojson',
+  l33: 'asli/2bd524813d389246.geojson',
+};
+const VARIAN = {
+  l32_p50: 'l32_p50.geojson', l32_p30: 'l32_p30.geojson', l32_p15: 'l32_p15.geojson',
+  l33_p50: 'l33_p50.geojson', l33_p30: 'l33_p30.geojson', l33_p15: 'l33_p15.geojson',
+};
+const osm = () => L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+const mapL = L.map('mapL', { preferCanvas: true, layers: [osm()] }).setView([-7.4, 111.9], 9);
+const mapR = L.map('mapR', { preferCanvas: true, layers: [osm()] }).setView([-7.4, 111.9], 9);
+// Sinkron zoom/pan dua arah (kunci anti-loop)
+let syncing = false;
+function link(a, b) {
+  a.on('moveend zoomend', () => {
+    if (syncing) return;
+    syncing = true;
+    b.setView(a.getCenter(), a.getZoom(), { animate: false });
+    syncing = false;
+  });
+}
+link(mapL, mapR);
+link(mapR, mapL);
+
+let leftIsAsli = true;
+let layers = [];
+let cache = {};
+const sel = document.getElementById('sel');
+const status = document.getElementById('status');
+const lblL = document.getElementById('lblL');
+const lblR = document.getElementById('lblR');
+
+async function get(url) {
+  if (!cache[url]) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' untuk ' + url);
+    cache[url] = await res.json();
+  }
+  return cache[url];
+}
+function info(gj) {
+  return gj.features.length + ' fitur, ' + (JSON.stringify(gj).length / 1048576).toFixed(2) + ' MB';
+}
+async function load() {
+  status.textContent = 'Memuat…';
+  try {
+    const key = sel.value;
+    const layer = key.slice(0, 3); // 'l32' / 'l33'
+    const gjAsli = await get(ASLI[layer]);
+    const gjVarian = await get(VARIAN[key]);
+    layers.forEach((l) => { mapL.removeLayer(l); mapR.removeLayer(l); });
+    layers = [];
+    const mkLeft = leftIsAsli ? gjAsli : gjVarian;
+    const mkRight = leftIsAsli ? gjVarian : gjAsli;
+    const nmLeft = (leftIsAsli ? 'ASLI ' : 'VARIAN ') + key;
+    const nmRight = (leftIsAsli ? 'VARIAN ' : 'ASLI ') + key;
+    const lL = L.geoJSON(mkLeft, { style: { color: '#2563eb', weight: 1, fillOpacity: 0, opacity: 1 } }).addTo(mapL);
+    const lR = L.geoJSON(mkRight, { style: { color: '#dc2626', weight: 1, fillOpacity: 0, opacity: 1 } }).addTo(mapR);
+    layers = [lL, lR];
+    lblL.textContent = 'Kiri (biru): ' + nmLeft + ' — ' + info(mkLeft);
+    lblR.textContent = 'Kanan (merah): ' + nmRight + ' — ' + info(mkRight);
+    mapL.fitBounds(lL.getBounds(), { padding: [10, 10] });
+    status.textContent = 'Siap. Geser/zoom salah satu peta, sisi lain mengikuti.';
+  } catch (e) {
+    status.textContent = 'Gagal: ' + e.message;
+  }
+}
+document.getElementById('btnSwap').addEventListener('click', () => {
+  leftIsAsli = !leftIsAsli;
+  load();
+});
+sel.addEventListener('change', load);
+load();
+</script>
+</body>
+</html>
